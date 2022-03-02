@@ -69,7 +69,7 @@
          * @since 2.3.0
          */
         H.getOptions().global.VMLRadialGradientURL =
-            'http://code.highcharts.com/6.0.3/gfx/vml-radial-gradient.png';
+            'http://code.highcharts.com/9.3.3/gfx/vml-radial-gradient.png';
 
 
         // Utilites

@@ -35,7 +35,7 @@
 
         var Highcharts = glob.Highcharts ? glob.Highcharts.error(16, true) : {
             product: 'Highcharts',
-            version: '6.0.3',
+            version: '9.3.3',
             deg2rad: Math.PI * 2 / 360,
             doc: doc,
             hasBidiBug: hasBidiBug,
@@ -4401,7 +4401,7 @@
                 // Add description
                 desc = this.createElement('desc').add();
                 desc.element.appendChild(
-                    doc.createTextNode('Created with Highcharts 6.0.3')
+                    doc.createTextNode('Created with Highcharts 9.3.3')
                 );
 
                 /**
