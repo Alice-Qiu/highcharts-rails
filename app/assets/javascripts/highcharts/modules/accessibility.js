@@ -1,2038 +1,258 @@
-/**
- * @license Highcharts JS v6.0.3 (2017-11-14)
- * Accessibility module
- *
- * (c) 2010-2017 Highsoft AS
- * Author: Oystein Moseng
- *
- * License: www.highcharts.com/license
- */
-'use strict';
-(function(factory) {
-    if (typeof module === 'object' && module.exports) {
-        module.exports = factory;
-    } else {
-        factory(Highcharts);
-    }
-}(function(Highcharts) {
-    (function(H) {
-        /**
-         * Accessibility module - Screen Reader support
-         *
-         * (c) 2010-2017 Highsoft AS
-         * Author: Oystein Moseng
-         *
-         * License: www.highcharts.com/license
-         */
-        /* eslint max-len: ["warn", 80, 4] */
-
-        var win = H.win,
-            doc = win.document,
-            each = H.each,
-            erase = H.erase,
-            addEvent = H.addEvent,
-            dateFormat = H.dateFormat,
-            merge = H.merge,
-            // CSS style to hide element from visual users while still exposing it to
-            // screen readers
-            hiddenStyle = {
-                position: 'absolute',
-                left: '-9999px',
-                top: 'auto',
-                width: '1px',
-                height: '1px',
-                overflow: 'hidden'
-            },
-            // Human readable description of series and each point in singular and
-            // plural
-            typeToSeriesMap = {
-                'default': ['series', 'data point', 'data points'],
-                'line': ['line', 'data point', 'data points'],
-                'spline': ['line', 'data point', 'data points'],
-                'area': ['line', 'data point', 'data points'],
-                'areaspline': ['line', 'data point', 'data points'],
-                'pie': ['pie', 'slice', 'slices'],
-                'column': ['column series', 'column', 'columns'],
-                'bar': ['bar series', 'bar', 'bars'],
-                'scatter': ['scatter series', 'data point', 'data points'],
-                'boxplot': ['boxplot series', 'box', 'boxes'],
-                'arearange': ['arearange series', 'data point', 'data points'],
-                'areasplinerange': [
-                    'areasplinerange series',
-                    'data point',
-                    'data points'
-                ],
-                'bubble': ['bubble series', 'bubble', 'bubbles'],
-                'columnrange': ['columnrange series', 'column', 'columns'],
-                'errorbar': ['errorbar series', 'errorbar', 'errorbars'],
-                'funnel': ['funnel', 'data point', 'data points'],
-                'pyramid': ['pyramid', 'data point', 'data points'],
-                'waterfall': ['waterfall series', 'column', 'columns'],
-                'map': ['map', 'area', 'areas'],
-                'mapline': ['line', 'data point', 'data points'],
-                'mappoint': ['point series', 'data point', 'data points'],
-                'mapbubble': ['bubble series', 'bubble', 'bubbles']
-            },
-            // Descriptions for exotic chart types
-            typeDescriptionMap = {
-                boxplot: ' Box plot charts are typically used to display groups of ' +
-                    'statistical data. Each data point in the chart can have up to 5 ' +
-                    'values: minimum, lower quartile, median, upper quartile and ' +
-                    'maximum. ',
-                arearange: ' Arearange charts are line charts displaying a range ' +
-                    'between a lower and higher value for each point. ',
-                areasplinerange: ' These charts are line charts displaying a range ' +
-                    'between a lower and higher value for each point. ',
-                bubble: ' Bubble charts are scatter charts where each data point ' +
-                    'also has a size value. ',
-                columnrange: ' Columnrange charts are column charts displaying a ' +
-                    'range between a lower and higher value for each point. ',
-                errorbar: ' Errorbar series are used to display the variability of ' +
-                    'the data. ',
-                funnel: ' Funnel charts are used to display reduction of data in ' +
-                    'stages. ',
-                pyramid: ' Pyramid charts consist of a single pyramid with item ' +
-                    'heights corresponding to each point value. ',
-                waterfall: ' A waterfall chart is a column chart where each column ' +
-                    'contributes towards a total end value. '
-            };
-
-
-        // If a point has one of the special keys defined, we expose all keys to the
-        // screen reader.
-        H.Series.prototype.commonKeys = ['name', 'id', 'category', 'x', 'value', 'y'];
-        H.Series.prototype.specialKeys = [
-            'z', 'open', 'high', 'q3', 'median', 'q1', 'low', 'close'
-        ];
-        if (H.seriesTypes.pie) {
-            // A pie is always simple. Don't quote me on that.
-            H.seriesTypes.pie.prototype.specialKeys = [];
-        }
-
-
-        /**
-         * Accessibility options
-         * @type {Object}
-         * @optionparent
-         */
-        H.setOptions({
-
-            /**
-             * Options for configuring accessibility for the chart. Requires the
-             * [accessibility module](//code.highcharts.com/modules/accessibility.
-             * js) to be loaded. For a description of the module and information
-             * on its features, see [Highcharts Accessibility](http://www.highcharts.
-             * com/docs/chart-concepts/accessibility).
-             * 
-             * @since 5.0.0
-             */
-            accessibility: {
-
-                /**
-                 * Enable accessibility features for the chart.
-                 * 
-                 * @type {Boolean}
-                 * @default true
-                 * @since 5.0.0
-                 */
-                enabled: true,
-
-                /**
-                 * When a series contains more points than this, we no longer expose
-                 * information about individual points to screen readers.
-                 * 
-                 * Set to `false` to disable.
-                 * 
-                 * @type {Number|Boolean}
-                 * @default 30
-                 * @since 5.0.0
-                 */
-                pointDescriptionThreshold: 30 // set to false to disable
-
-                /**
-                 * Whether or not to add series descriptions to charts with a single
-                 * series.
-                 * 
-                 * @type {Boolean}
-                 * @default false
-                 * @since 5.0.0
-                 * @apioption accessibility.describeSingleSeries
-                 */
-
-                /**
-                 * Function to run upon clicking the "View as Data Table" link in the
-                 * screen reader region.
-                 * 
-                 * By default Highcharts will insert and set focus to a data table
-                 * representation of the chart.
-                 * 
-                 * @type {Function}
-                 * @since 5.0.0
-                 * @apioption accessibility.onTableAnchorClick
-                 */
-
-                /**
-                 * Date format to use for points on datetime axes when describing them
-                 * to screen reader users.
-                 * 
-                 * Defaults to the same format as in tooltip.
-                 * 
-                 * For an overview of the replacement codes, see
-                 * [dateFormat](#Highcharts.dateFormat).
-                 * 
-                 * @type {String}
-                 * @see [pointDateFormatter](#accessibility.pointDateFormatter)
-                 * @since 5.0.0
-                 * @apioption accessibility.pointDateFormat
-                 */
-
-                /**
-                 * Formatter function to determine the date/time format used with
-                 * points on datetime axes when describing them to screen reader users.
-                 * Receives one argument, `point`, referring to the point to describe.
-                 * Should return a date format string compatible with
-                 * [dateFormat](#Highcharts.dateFormat).
-                 * 
-                 * @type {Function}
-                 * @see [pointDateFormat](#accessibility.pointDateFormat)
-                 * @since 5.0.0
-                 * @apioption accessibility.pointDateFormatter
-                 */
-
-                /**
-                 * Formatter function to use instead of the default for point
-                 * descriptions.
-                 * Receives one argument, `point`, referring to the point to describe.
-                 * Should return a String with the description of the point for a screen
-                 * reader user.
-                 * 
-                 * @type {Function}
-                 * @see [point.description](#series.line.data.description)
-                 * @since 5.0.0
-                 * @apioption accessibility.pointDescriptionFormatter
-                 */
-
-                /**
-                 * A formatter function to create the HTML contents of the hidden screen
-                 * reader information region. Receives one argument, `chart`, referring
-                 * to the chart object. Should return a String with the HTML content
-                 * of the region.
-                 * 
-                 * The link to view the chart as a data table will be added
-                 * automatically after the custom HTML content.
-                 * 
-                 * @type {Function}
-                 * @default undefined
-                 * @since 5.0.0
-                 * @apioption accessibility.screenReaderSectionFormatter
-                 */
-
-                /**
-                 * Formatter function to use instead of the default for series
-                 * descriptions. Receives one argument, `series`, referring to the
-                 * series to describe. Should return a String with the description of
-                 * the series for a screen reader user.
-                 * 
-                 * @type {Function}
-                 * @see [series.description](#plotOptions.series.description)
-                 * @since 5.0.0
-                 * @apioption accessibility.seriesDescriptionFormatter
-                 */
-            }
-        });
-
-        /**
-         * A text description of the chart.
-         * 
-         * If the Accessibility module is loaded, this is included by default
-         * as a long description of the chart and its contents in the hidden
-         * screen reader information region.
-         * 
-         * @type {String}
-         * @see [typeDescription](#chart.typeDescription)
-         * @default undefined
-         * @since 5.0.0
-         * @apioption chart.description
-         */
-
-        /**
-         * A text description of the chart type.
-         * 
-         * If the Accessibility module is loaded, this will be included in the
-         * description of the chart in the screen reader information region.
-         * 
-         * 
-         * Highcharts will by default attempt to guess the chart type, but for
-         * more complex charts it is recommended to specify this property for
-         * clarity.
-         * 
-         * @type {String}
-         * @default undefined
-         * @since 5.0.0
-         * @apioption chart.typeDescription
-         */
-
-
-        /**
-         * HTML encode some characters vulnerable for XSS.
-         * @param  {string} html The input string
-         * @return {string} The excaped string
-         */
-        function htmlencode(html) {
-            return html
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#x27;')
-                .replace(/\//g, '&#x2F;');
-        }
-
-        /**
-         * Strip HTML tags away from a string. Used for aria-label attributes, painting
-         * on a canvas will fail if the text contains tags.
-         * @param  {String} s The input string
-         * @return {String}   The filtered string
-         */
-        function stripTags(s) {
-            return typeof s === 'string' ? s.replace(/<\/?[^>]+(>|$)/g, '') : s;
-        }
-
-
-        // Utility function. Reverses child nodes of a DOM element
-        function reverseChildNodes(node) {
-            var i = node.childNodes.length;
-            while (i--) {
-                node.appendChild(node.childNodes[i]);
-            }
-        }
-
-
-        // Whenever drawing series, put info on DOM elements
-        H.wrap(H.Series.prototype, 'render', function(proceed) {
-            proceed.apply(this, Array.prototype.slice.call(arguments, 1));
-            if (this.chart.options.accessibility.enabled) {
-                this.setA11yDescription();
-            }
-        });
-
-
-        // Put accessible info on series and points of a series
-        H.Series.prototype.setA11yDescription = function() {
-            var a11yOptions = this.chart.options.accessibility,
-                firstPointEl = (
-                    this.points &&
-                    this.points.length &&
-                    this.points[0].graphic &&
-                    this.points[0].graphic.element
-                ),
-                seriesEl = (
-                    firstPointEl &&
-                    firstPointEl.parentNode || this.graph &&
-                    this.graph.element || this.group &&
-                    this.group.element
-                ); // Could be tracker series depending on series type
-
-            if (seriesEl) {
-                // For some series types the order of elements do not match the order of
-                // points in series. In that case we have to reverse them in order for
-                // AT to read them out in an understandable order
-                if (seriesEl.lastChild === firstPointEl) {
-                    reverseChildNodes(seriesEl);
-                }
-                // Make individual point elements accessible if possible. Note: If
-                // markers are disabled there might not be any elements there to make
-                // accessible.
-                if (
-                    this.points && (
-                        this.points.length < a11yOptions.pointDescriptionThreshold ||
-                        a11yOptions.pointDescriptionThreshold === false
-                    )
-                ) {
-                    each(this.points, function(point) {
-                        if (point.graphic) {
-                            point.graphic.element.setAttribute('role', 'img');
-                            point.graphic.element.setAttribute('tabindex', '-1');
-                            point.graphic.element.setAttribute('aria-label', stripTags(
-                                point.series.options.pointDescriptionFormatter &&
-                                point.series.options.pointDescriptionFormatter(point) ||
-                                a11yOptions.pointDescriptionFormatter &&
-                                a11yOptions.pointDescriptionFormatter(point) ||
-                                point.buildPointInfoString()
-                            ));
-                        }
-                    });
-                }
-                // Make series element accessible
-                if (this.chart.series.length > 1 || a11yOptions.describeSingleSeries) {
-                    seriesEl.setAttribute(
-                        'role',
-                        this.options.exposeElementToA11y ? 'img' : 'region'
-                    );
-                    seriesEl.setAttribute('tabindex', '-1');
-                    seriesEl.setAttribute(
-                        'aria-label',
-                        stripTags(
-                            a11yOptions.seriesDescriptionFormatter &&
-                            a11yOptions.seriesDescriptionFormatter(this) ||
-                            this.buildSeriesInfoString()
-                        )
-                    );
-                }
-            }
-        };
-
-
-        // Return string with information about series
-        H.Series.prototype.buildSeriesInfoString = function() {
-            var typeInfo = (
-                    typeToSeriesMap[this.type] ||
-                    typeToSeriesMap['default'] // eslint-disable-line dot-notation
-                ),
-                description = this.description || this.options.description;
-            return (this.name ? this.name + ', ' : '') +
-                (this.chart.types.length === 1 ? typeInfo[0] : 'series') +
-                ' ' + (this.index + 1) + ' of ' + (this.chart.series.length) +
-                (
-                    this.chart.types.length === 1 ?
-                    ' with ' :
-                    '. ' + typeInfo[0] + ' with '
-                ) +
-                (
-                    this.points.length + ' ' +
-                    (this.points.length === 1 ? typeInfo[1] : typeInfo[2])
-                ) +
-                (description ? '. ' + description : '') +
-                (
-                    this.chart.yAxis.length > 1 && this.yAxis ?
-                    '. Y axis, ' + this.yAxis.getDescription() :
-                    ''
-                ) +
-                (
-                    this.chart.xAxis.length > 1 && this.xAxis ?
-                    '. X axis, ' + this.xAxis.getDescription() :
-                    ''
-                );
-        };
-
-
-        // Return string with information about point
-        H.Point.prototype.buildPointInfoString = function() {
-            var point = this,
-                series = point.series,
-                a11yOptions = series.chart.options.accessibility,
-                infoString = '',
-                dateTimePoint = series.xAxis && series.xAxis.isDatetimeAxis,
-                timeDesc =
-                dateTimePoint &&
-                dateFormat(
-                    a11yOptions.pointDateFormatter &&
-                    a11yOptions.pointDateFormatter(point) ||
-                    a11yOptions.pointDateFormat ||
-                    H.Tooltip.prototype.getXDateFormat(
-                        point,
-                        series.chart.options.tooltip,
-                        series.xAxis
-                    ),
-                    point.x
-                ),
-                hasSpecialKey = H.find(series.specialKeys, function(key) {
-                    return point[key] !== undefined;
-                });
-
-            // If the point has one of the less common properties defined, display all
-            // that are defined
-            if (hasSpecialKey) {
-                if (dateTimePoint) {
-                    infoString = timeDesc;
-                }
-                each(series.commonKeys.concat(series.specialKeys), function(key) {
-                    if (point[key] !== undefined && !(dateTimePoint && key === 'x')) {
-                        infoString += (infoString ? '. ' : '') +
-                            key + ', ' +
-                            point[key];
-                    }
-                });
-            } else {
-                // Pick and choose properties for a succint label
-                infoString =
-                    (
-                        this.name ||
-                        timeDesc ||
-                        this.category ||
-                        this.id ||
-                        'x, ' + this.x
-                    ) + ', ' +
-                    (this.value !== undefined ? this.value : this.y);
-            }
-
-            return (this.index + 1) + '. ' + infoString + '.' +
-                (this.description ? ' ' + this.description : '');
-        };
-
-
-        // Get descriptive label for axis
-        H.Axis.prototype.getDescription = function() {
-            return (
-                this.userOptions && this.userOptions.description ||
-                this.axisTitle && this.axisTitle.textStr ||
-                this.options.id ||
-                this.categories && 'categories' ||
-                'values'
-            );
-        };
-
-
-        // Whenever adding or removing series, keep track of types present in chart
-        H.wrap(H.Series.prototype, 'init', function(proceed) {
-            proceed.apply(this, Array.prototype.slice.call(arguments, 1));
-            var chart = this.chart;
-            if (chart.options.accessibility.enabled) {
-                chart.types = chart.types || [];
-
-                // Add type to list if does not exist
-                if (chart.types.indexOf(this.type) < 0) {
-                    chart.types.push(this.type);
-                }
-
-                addEvent(this, 'remove', function() {
-                    var removedSeries = this,
-                        hasType = false;
-
-                    // Check if any of the other series have the same type as this one.
-                    // Otherwise remove it from the list.
-                    each(chart.series, function(s) {
-                        if (
-                            s !== removedSeries &&
-                            chart.types.indexOf(removedSeries.type) < 0
-                        ) {
-                            hasType = true;
-                        }
-                    });
-                    if (!hasType) {
-                        erase(chart.types, removedSeries.type);
-                    }
-                });
-            }
-        });
-
-
-        // Return simplified description of chart type. Some types will not be familiar
-        // to most screen reader users, but we try.
-        H.Chart.prototype.getTypeDescription = function() {
-            var firstType = this.types && this.types[0],
-                mapTitle = this.series[0] && this.series[0].mapTitle;
-            if (!firstType) {
-                return 'Empty chart.';
-            } else if (firstType === 'map') {
-                return mapTitle ? 'Map of ' + mapTitle : 'Map of unspecified region.';
-            } else if (this.types.length > 1) {
-                return 'Combination chart.';
-            } else if (['spline', 'area', 'areaspline'].indexOf(firstType) > -1) {
-                return 'Line chart.';
-            }
-            return firstType + ' chart.' + (typeDescriptionMap[firstType] || '');
-        };
-
-
-        // Return object with text description of each of the chart's axes
-        H.Chart.prototype.getAxesDescription = function() {
-            var numXAxes = this.xAxis.length,
-                numYAxes = this.yAxis.length,
-                desc = {},
-                i;
-
-            if (numXAxes) {
-                desc.xAxis = 'The chart has ' + numXAxes +
-                    (numXAxes > 1 ? ' X axes' : ' X axis') + ' displaying ';
-                if (numXAxes < 2) {
-                    desc.xAxis += this.xAxis[0].getDescription() + '.';
-                } else {
-                    for (i = 0; i < numXAxes - 1; ++i) {
-                        desc.xAxis += (i ? ', ' : '') + this.xAxis[i].getDescription();
-                    }
-                    desc.xAxis += ' and ' + this.xAxis[i].getDescription() + '.';
-                }
-            }
-
-            if (numYAxes) {
-                desc.yAxis = 'The chart has ' + numYAxes +
-                    (numYAxes > 1 ? ' Y axes' : ' Y axis') + ' displaying ';
-                if (numYAxes < 2) {
-                    desc.yAxis += this.yAxis[0].getDescription() + '.';
-                } else {
-                    for (i = 0; i < numYAxes - 1; ++i) {
-                        desc.yAxis += (i ? ', ' : '') + this.yAxis[i].getDescription();
-                    }
-                    desc.yAxis += ' and ' + this.yAxis[i].getDescription() + '.';
-                }
-            }
-
-            return desc;
-        };
-
-
-        // Set a11y attribs on exporting menu
-        H.Chart.prototype.addAccessibleContextMenuAttribs = function() {
-            var exportList = this.exportDivElements;
-            if (exportList) {
-                // Set tabindex on the menu items to allow focusing by script
-                // Set role to give screen readers a chance to pick up the contents
-                each(exportList, function(item) {
-                    if (item.tagName === 'DIV' &&
-                        !(item.children && item.children.length)) {
-                        item.setAttribute('role', 'menuitem');
-                        item.setAttribute('tabindex', -1);
-                    }
-                });
-                // Set accessibility properties on parent div
-                exportList[0].parentNode.setAttribute('role', 'menu');
-                exportList[0].parentNode.setAttribute('aria-label', 'Chart export');
-            }
-        };
-
-
-        // Add screen reader region to chart.
-        // tableId is the HTML id of the table to focus when clicking the table anchor
-        // in the screen reader region.
-        H.Chart.prototype.addScreenReaderRegion = function(id, tableId) {
-            var chart = this,
-                series = chart.series,
-                options = chart.options,
-                a11yOptions = options.accessibility,
-                hiddenSection = chart.screenReaderRegion = doc.createElement('div'),
-                tableShortcut = doc.createElement('h4'),
-                tableShortcutAnchor = doc.createElement('a'),
-                chartHeading = doc.createElement('h4'),
-                chartTypes = chart.types || [],
-                // Build axis info - but not for pies and maps. Consider not adding for
-                // certain other types as well (funnel, pyramid?)
-                axesDesc = (
-                    chartTypes.length === 1 && chartTypes[0] === 'pie' ||
-                    chartTypes[0] === 'map'
-                ) && {} || chart.getAxesDescription(),
-                chartTypeInfo = series[0] && typeToSeriesMap[series[0].type] ||
-                typeToSeriesMap['default']; // eslint-disable-line dot-notation
-
-            hiddenSection.setAttribute('id', id);
-            hiddenSection.setAttribute('role', 'region');
-            hiddenSection.setAttribute(
-                'aria-label',
-                'Chart screen reader information.'
-            );
-
-            hiddenSection.innerHTML =
-                a11yOptions.screenReaderSectionFormatter &&
-                a11yOptions.screenReaderSectionFormatter(chart) ||
-                '<div>Use regions/landmarks to skip ahead to chart' +
-                (series.length > 1 ? ' and navigate between data series' : '') +
-                '.</div><h3>' +
-                (options.title.text ? htmlencode(options.title.text) : 'Chart') +
-                (
-                    options.subtitle && options.subtitle.text ?
-                    '. ' + htmlencode(options.subtitle.text) :
-                    ''
-                ) +
-                '</h3><h4>Long description.</h4><div>' +
-                (options.chart.description || 'No description available.') +
-                '</div><h4>Structure.</h4><div>Chart type: ' +
-                (options.chart.typeDescription || chart.getTypeDescription()) +
-                '</div>' +
-                (
-                    series.length === 1 ?
-                    (
-                        '<div>' + chartTypeInfo[0] + ' with ' +
-                        series[0].points.length + ' ' +
-                        (
-                            series[0].points.length === 1 ?
-                            chartTypeInfo[1] :
-                            chartTypeInfo[2]
-                        ) +
-                        '.</div>'
-                    ) : ''
-                ) +
-                (axesDesc.xAxis ? ('<div>' + axesDesc.xAxis + '</div>') : '') +
-                (axesDesc.yAxis ? ('<div>' + axesDesc.yAxis + '</div>') : '');
-
-            // Add shortcut to data table if export-data is loaded
-            if (chart.getCSV) {
-                tableShortcutAnchor.innerHTML = 'View as data table.';
-                tableShortcutAnchor.href = '#' + tableId;
-                // Make this unreachable by user tabbing
-                tableShortcutAnchor.setAttribute('tabindex', '-1');
-                tableShortcutAnchor.onclick =
-                    a11yOptions.onTableAnchorClick || function() {
-                        chart.viewData();
-                        doc.getElementById(tableId).focus();
-                    };
-                tableShortcut.appendChild(tableShortcutAnchor);
-                hiddenSection.appendChild(tableShortcut);
-            }
-
-            // Note: JAWS seems to refuse to read aria-label on the container, so add an
-            // h4 element as title for the chart.
-            chartHeading.innerHTML = 'Chart graphic.';
-            chart.renderTo.insertBefore(chartHeading, chart.renderTo.firstChild);
-            chart.renderTo.insertBefore(hiddenSection, chart.renderTo.firstChild);
-
-            // Hide the section and the chart heading
-            merge(true, chartHeading.style, hiddenStyle);
-            merge(true, hiddenSection.style, hiddenStyle);
-        };
-
-
-        // Make chart container accessible, and wrap table functionality
-        H.Chart.prototype.callbacks.push(function(chart) {
-            var options = chart.options,
-                a11yOptions = options.accessibility;
-
-            if (!a11yOptions.enabled) {
-                return;
-            }
-
-            var titleElement = doc.createElementNS(
-                    'http://www.w3.org/2000/svg',
-                    'title'
-                ),
-                exportGroupElement = doc.createElementNS(
-                    'http://www.w3.org/2000/svg',
-                    'g'
-                ),
-                descElement = chart.container.getElementsByTagName('desc')[0],
-                textElements = chart.container.getElementsByTagName('text'),
-                titleId = 'highcharts-title-' + chart.index,
-                tableId = 'highcharts-data-table-' + chart.index,
-                hiddenSectionId = 'highcharts-information-region-' + chart.index,
-                chartTitle = options.title.text || 'Chart',
-                oldColumnHeaderFormatter = (
-                    options.exporting &&
-                    options.exporting.csv &&
-                    options.exporting.csv.columnHeaderFormatter
-                ),
-                topLevelColumns = [];
-
-            // Add SVG title/desc tags
-            titleElement.textContent = htmlencode(chartTitle);
-            titleElement.id = titleId;
-            descElement.parentNode.insertBefore(titleElement, descElement);
-            chart.renderTo.setAttribute('role', 'region');
-            chart.renderTo.setAttribute(
-                'aria-label',
-                stripTags(
-                    'Interactive chart. ' + chartTitle +
-                    '. Use up and down arrows to navigate with most screen readers.'
-                )
-            );
-
-            // Set screen reader properties on export menu
-            if (
-                chart.exportSVGElements &&
-                chart.exportSVGElements[0] &&
-                chart.exportSVGElements[0].element
-            ) {
-                var oldExportCallback = chart.exportSVGElements[0].element.onclick,
-                    parent = chart.exportSVGElements[0].element.parentNode;
-                chart.exportSVGElements[0].element.onclick = function() {
-                    oldExportCallback.apply(
-                        this,
-                        Array.prototype.slice.call(arguments)
-                    );
-                    chart.addAccessibleContextMenuAttribs();
-                    chart.highlightExportItem(0);
-                };
-                chart.exportSVGElements[0].element.setAttribute('role', 'button');
-                chart.exportSVGElements[0].element.setAttribute(
-                    'aria-label',
-                    'View export menu'
-                );
-                exportGroupElement.appendChild(chart.exportSVGElements[0].element);
-                exportGroupElement.setAttribute('role', 'region');
-                exportGroupElement.setAttribute('aria-label', 'Chart export menu');
-                parent.appendChild(exportGroupElement);
-            }
-
-            // Set screen reader properties on input boxes for range selector. We need
-            // to do this regardless of whether or not these are visible, as they are 
-            // by default part of the page's tabindex unless we set them to -1.
-            if (chart.rangeSelector) {
-                each(['minInput', 'maxInput'], function(key, i) {
-                    if (chart.rangeSelector[key]) {
-                        chart.rangeSelector[key].setAttribute('tabindex', '-1');
-                        chart.rangeSelector[key].setAttribute('role', 'textbox');
-                        chart.rangeSelector[key].setAttribute(
-                            'aria-label',
-                            'Select ' + (i ? 'end' : 'start') + ' date.'
-                        );
-                    }
-                });
-            }
-
-            // Hide text elements from screen readers
-            each(textElements, function(el) {
-                el.setAttribute('aria-hidden', 'true');
-            });
-
-            // Add top-secret screen reader region
-            chart.addScreenReaderRegion(hiddenSectionId, tableId);
-
-
-            /* Wrap table functionality from export-data */
-            /* TODO: Can't we just do this in export-data? */
-
-            // Keep track of columns
-            merge(true, options.exporting, {
-                csv: {
-                    columnHeaderFormatter: function(item, key, keyLength) {
-                        if (!item) {
-                            return 'Category';
-                        }
-                        if (item instanceof H.Axis) {
-                            return (item.options.title && item.options.title.text) ||
-                                (item.isDatetimeAxis ? 'DateTime' : 'Category');
-                        }
-                        var prevCol = topLevelColumns[topLevelColumns.length - 1];
-                        if (keyLength > 1) {
-                            // We need multiple levels of column headers
-                            // Populate a list of column headers to add in addition to
-                            // the ones added by export-data
-                            if ((prevCol && prevCol.text) !== item.name) {
-                                topLevelColumns.push({
-                                    text: item.name,
-                                    span: keyLength
-                                });
-                            }
-                        }
-                        if (oldColumnHeaderFormatter) {
-                            return oldColumnHeaderFormatter.call(
-                                this,
-                                item,
-                                key,
-                                keyLength
-                            );
-                        }
-                        return keyLength > 1 ? key : item.name;
-                    }
-                }
-            });
-
-            // Add ID and title/caption to table HTML
-            H.wrap(chart, 'getTable', function(proceed) {
-                return proceed.apply(this, Array.prototype.slice.call(arguments, 1))
-                    .replace(
-                        '<table>',
-                        '<table id="' + tableId + '" summary="Table representation ' +
-                        'of chart"><caption>' + chartTitle + '</caption>'
-                    );
-            });
-
-            // Add accessibility attributes and top level columns
-            H.wrap(chart, 'viewData', function(proceed) {
-                if (!this.dataTableDiv) {
-                    proceed.apply(this, Array.prototype.slice.call(arguments, 1));
-
-                    var table = doc.getElementById(tableId),
-                        head = table.getElementsByTagName('thead')[0],
-                        body = table.getElementsByTagName('tbody')[0],
-                        firstRow = head.firstChild.children,
-                        columnHeaderRow = '<tr><td></td>',
-                        cell,
-                        newCell;
-
-                    // Make table focusable by script
-                    table.setAttribute('tabindex', '-1');
-
-                    // Create row headers
-                    each(body.children, function(el) {
-                        cell = el.firstChild;
-                        newCell = doc.createElement('th');
-                        newCell.setAttribute('scope', 'row');
-                        newCell.innerHTML = cell.innerHTML;
-                        cell.parentNode.replaceChild(newCell, cell);
-                    });
-
-                    // Set scope for column headers
-                    each(firstRow, function(el) {
-                        if (el.tagName === 'TH') {
-                            el.setAttribute('scope', 'col');
-                        }
-                    });
-
-                    // Add top level columns
-                    if (topLevelColumns.length) {
-                        each(topLevelColumns, function(col) {
-                            columnHeaderRow += '<th scope="col" colspan="' + col.span +
-                                '">' + col.text + '</th>';
-                        });
-                        head.insertAdjacentHTML('afterbegin', columnHeaderRow);
-                    }
-                }
-            });
-        });
-
-    }(Highcharts));
-    (function(H) {
-        /**
-         * Accessibility module - Keyboard navigation
-         *
-         * (c) 2010-2017 Highsoft AS
-         * Author: Oystein Moseng
-         *
-         * License: www.highcharts.com/license
-         */
-        /* eslint max-len: ["warn", 80, 4] */
-
-        var win = H.win,
-            doc = win.document,
-            each = H.each,
-            addEvent = H.addEvent,
-            fireEvent = H.fireEvent,
-            merge = H.merge,
-            pick = H.pick;
-
-        // Add focus border functionality to SVGElements.
-        // Draws a new rect on top of element around its bounding box.
-        H.extend(H.SVGElement.prototype, {
-            addFocusBorder: function(margin, style) {
-                // Allow updating by just adding new border
-                if (this.focusBorder) {
-                    this.removeFocusBorder();
-                }
-                // Add the border rect
-                var bb = this.getBBox(),
-                    pad = pick(margin, 3);
-                this.focusBorder = this.renderer.rect(
-                        bb.x - pad,
-                        bb.y - pad,
-                        bb.width + 2 * pad,
-                        bb.height + 2 * pad,
-                        style && style.borderRadius
-                    )
-                    .addClass('highcharts-focus-border')
-
-                    .attr({
-                        stroke: style && style.stroke,
-                        'stroke-width': style && style.strokeWidth
-                    })
-
-                    .attr({
-                        zIndex: 99
-                    })
-                    .add(this.parentGroup);
-            },
-
-            removeFocusBorder: function() {
-                if (this.focusBorder) {
-                    this.focusBorder.destroy();
-                    delete this.focusBorder;
-                }
-            }
-        });
-
-
-        // Set for which series types it makes sense to move to the closest point with
-        // up/down arrows, and which series types should just move to next series.
-        H.Series.prototype.keyboardMoveVertical = true;
-        each(['column', 'pie'], function(type) {
-            if (H.seriesTypes[type]) {
-                H.seriesTypes[type].prototype.keyboardMoveVertical = false;
-            }
-        });
-
-        /**
-         * Strip HTML tags away from a string. Used for aria-label attributes, painting
-         * on a canvas will fail if the text contains tags.
-         * @param  {String} s The input string
-         * @return {String}   The filtered string
-         */
-        function stripTags(s) {
-            return typeof s === 'string' ? s.replace(/<\/?[^>]+(>|$)/g, '') : s;
-        }
-
-
-        H.setOptions({
-            accessibility: {
-
-                /**
-                 * Options for keyboard navigation.
-                 * 
-                 * @type {Object}
-                 * @since 5.0.0
-                 */
-                keyboardNavigation: {
-
-                    /**
-                     * Enable keyboard navigation for the chart.
-                     * 
-                     * @type {Boolean}
-                     * @default true
-                     * @since 5.0.0
-                     */
-                    enabled: true,
-
-                    /**
-                     * Options for the focus border drawn around elements while
-                     * navigating through them.
-                     *
-                     * @since 6.0.3
-                     */
-                    focusBorder: {
-                        /**
-                         * Enable/disable focus border for chart.
-                         */
-                        enabled: true,
-
-                        /**
-                         * Style options for the focus border drawn around elements 
-                         * while navigating through them. Note that some browsers in 
-                         * addition draw their own borders for focused elements. These
-                         * automatic borders can not be styled by Highcharts.
-                         * 
-                         * In styled mode, the border is given the 
-                         * `.highcharts-focus-border` class.
-                         */
-                        style: {
-                            color: '#000000',
-                            lineWidth: 1,
-                            borderRadius: 2
-                        },
-
-                        /**
-                         * Focus border margin around the elements.
-                         */
-                        margin: 2
-                    }
-
-                    /**
-                     * Skip null points when navigating through points with the
-                     * keyboard.
-                     * 
-                     * @type {Boolean}
-                     * @default false
-                     * @since 5.0.0
-                     * @apioption accessibility.keyboardNavigation.skipNullPoints
-                     */
-                }
-            }
-        });
-
-        /**
-         * Keyboard navigation for the legend. Requires the Accessibility module.
-         * @since 5.0.14
-         * @apioption legend.keyboardNavigation
-         */
-
-        /**
-         * Enable/disable keyboard navigation for the legend. Requires the Accessibility
-         * module.
-         * 
-         * @type {Boolean}
-         * @see [accessibility.keyboardNavigation](#accessibility.keyboardNavigation.
-         * enabled)
-         * @default true
-         * @since 5.0.13
-         * @apioption legend.keyboardNavigation.enabled
-         */
-
-
-        // Abstraction layer for keyboard navigation. Keep a map of keyCodes to
-        // handler functions, and a next/prev move handler for tab order. The
-        // module's keyCode handlers determine when to move to another module.
-        // Validate holds a function to determine if there are prerequisites for
-        // this module to run that are not met. Init holds a function to run once
-        // before any keyCodes are interpreted. Terminate holds a function to run
-        // once before moving to next/prev module.
-        // The chart object keeps track of a list of KeyboardNavigationModules.
-        function KeyboardNavigationModule(chart, options) {
-            this.chart = chart;
-            this.id = options.id;
-            this.keyCodeMap = options.keyCodeMap;
-            this.validate = options.validate;
-            this.init = options.init;
-            this.terminate = options.terminate;
-        }
-        KeyboardNavigationModule.prototype = {
-            // Find handler function(s) for key code in the keyCodeMap and run it.
-            run: function(e) {
-                var navModule = this,
-                    keyCode = e.which || e.keyCode,
-                    found = false,
-                    handled = false;
-                each(this.keyCodeMap, function(codeSet) {
-                    if (codeSet[0].indexOf(keyCode) > -1) {
-                        found = true;
-                        handled = codeSet[1].call(navModule, keyCode, e) === false ?
-                            // If explicitly returning false, we haven't handled it
-                            false :
-                            true;
-                    }
-                });
-                // Default tab handler, move to next/prev module
-                if (!found && keyCode === 9) {
-                    handled = this.move(e.shiftKey ? -1 : 1);
-                }
-                return handled;
-            },
-
-            // Move to next/prev valid module, or undefined if none, and init
-            // it. Returns true on success and false if there is no valid module
-            // to move to.
-            move: function(direction) {
-                var chart = this.chart;
-                if (this.terminate) {
-                    this.terminate(direction);
-                }
-                chart.keyboardNavigationModuleIndex += direction;
-                var newModule = chart.keyboardNavigationModules[
-                    chart.keyboardNavigationModuleIndex
-                ];
-
-                // Remove existing focus border if any
-                if (chart.focusElement) {
-                    chart.focusElement.removeFocusBorder();
-                }
-
-                // Verify new module
-                if (newModule) {
-                    if (newModule.validate && !newModule.validate()) {
-                        return this.move(direction); // Invalid module, recurse
-                    }
-                    if (newModule.init) {
-                        newModule.init(direction); // Valid module, init it
-                        return true;
-                    }
-                }
-                // No module
-                chart.keyboardNavigationModuleIndex = 0; // Reset counter
-
-                // Set focus to chart or exit anchor depending on direction
-                if (direction > 0) {
-                    this.chart.exiting = true;
-                    this.chart.tabExitAnchor.focus();
-                } else {
-                    this.chart.renderTo.focus();
-                }
-
-                return false;
-            }
-        };
-
-
-        // Utility function to attempt to fake a click event on an element
-        function fakeClickEvent(element) {
-            var fakeEvent;
-            if (element && element.onclick && doc.createEvent) {
-                fakeEvent = doc.createEvent('Events');
-                fakeEvent.initEvent('click', true, false);
-                element.onclick(fakeEvent);
-            }
-        }
-
-
-        // Determine if a point should be skipped
-        function isSkipPoint(point) {
-            return point.isNull &&
-                point.series.chart.options.accessibility
-                .keyboardNavigation.skipNullPoints ||
-                point.series.options.skipKeyboardNavigation ||
-                !point.series.visible;
-        }
-
-
-        // Get the point in a series that is closest (in distance) to a reference point
-        // Optionally supply weight factors for x and y directions
-        function getClosestPoint(point, series, xWeight, yWeight) {
-            var minDistance = Infinity,
-                dPoint,
-                minIx,
-                distance,
-                i = series.points.length;
-            if (point.plotX === undefined || point.plotY === undefined) {
-                return;
-            }
-            while (i--) {
-                dPoint = series.points[i];
-                if (dPoint.plotX === undefined || dPoint.plotY === undefined) {
-                    return;
-                }
-                distance = (point.plotX - dPoint.plotX) *
-                    (point.plotX - dPoint.plotX) * (xWeight || 1) +
-                    (point.plotY - dPoint.plotY) *
-                    (point.plotY - dPoint.plotY) * (yWeight || 1);
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    minIx = i;
-                }
-            }
-            return series.points[minIx || 0];
-        }
-
-
-        // Pan along axis in a direction (1 or -1), optionally with a defined
-        // granularity (number of steps it takes to walk across current view)
-        H.Axis.prototype.panStep = function(direction, granularity) {
-            var gran = granularity || 3,
-                extremes = this.getExtremes(),
-                step = (extremes.max - extremes.min) / gran * direction,
-                newMax = extremes.max + step,
-                newMin = extremes.min + step,
-                size = newMax - newMin;
-            if (direction < 0 && newMin < extremes.dataMin) {
-                newMin = extremes.dataMin;
-                newMax = newMin + size;
-            } else if (direction > 0 && newMax > extremes.dataMax) {
-                newMax = extremes.dataMax;
-                newMin = newMax - size;
-            }
-            this.setExtremes(newMin, newMax);
-        };
-
-
-        // Set chart's focus to an SVGElement. Calls focus() on it, and draws the focus
-        // border. If the focusElement argument is supplied, it draws the border around 
-        // svgElement and sets the focus to focusElement.
-        H.Chart.prototype.setFocusToElement = function(svgElement, focusElement) {
-            var focusBorderOptions = this.options.accessibility
-                .keyboardNavigation.focusBorder;
-            if (focusBorderOptions.enabled && svgElement !== this.focusElement) {
-                // Remove old focus border
-                if (this.focusElement) {
-                    this.focusElement.removeFocusBorder();
-                }
-                // Set browser focus if possible
-                if (
-                    focusElement &&
-                    focusElement.element &&
-                    focusElement.element.focus
-                ) {
-                    focusElement.element.focus();
-                } else if (svgElement.element.focus) {
-                    svgElement.element.focus();
-                }
-                // Draw focus border (since some browsers don't do it automatically)
-                svgElement.addFocusBorder(focusBorderOptions.margin, {
-                    stroke: focusBorderOptions.style.color,
-                    strokeWidth: focusBorderOptions.style.lineWidth,
-                    borderRadius: focusBorderOptions.style.borderRadius
-                });
-                this.focusElement = svgElement;
-            }
-        };
-
-
-        // Highlight a point (show tooltip and display hover state). Returns the
-        // highlighted point.
-        H.Point.prototype.highlight = function() {
-            var chart = this.series.chart;
-            if (!this.isNull) {
-                this.onMouseOver(); // Show the hover marker and tooltip
-            } else {
-                if (chart.tooltip) {
-                    chart.tooltip.hide(0);
-                }
-                // Don't call blur on the element, as it messes up the chart div's focus
-            }
-
-            // We focus only after calling onMouseOver because the state change can 
-            // change z-index and mess up the element.
-            if (this.graphic) {
-                chart.setFocusToElement(this.graphic);
-            }
-
-            chart.highlightedPoint = this;
-            return this;
-        };
-
-
-        // Function to highlight next/previous point in chart
-        // Returns highlighted point on success, false on failure (no adjacent point to
-        // highlight in chosen direction)
-        H.Chart.prototype.highlightAdjacentPoint = function(next) {
-            var chart = this,
-                series = chart.series,
-                curPoint = chart.highlightedPoint,
-                curPointIndex = curPoint && curPoint.index || 0,
-                curPoints = curPoint && curPoint.series.points,
-                lastSeries = chart.series && chart.series[chart.series.length - 1],
-                lastPoint = lastSeries && lastSeries.points &&
-                lastSeries.points[lastSeries.points.length - 1],
-                newSeries,
-                newPoint,
-                // Handle connecting ends - where the points array has an extra last
-                // point that is a reference to the first one. We skip this.
-                forwardSkipAmount = curPoint && curPoint.series.connectEnds &&
-                curPointIndex > curPoints.length - 3 ? 2 : 1;
-
-            // If no points, return false
-            if (!series[0] || !series[0].points) {
-                return false;
-            }
-
-            if (!curPoint) {
-                // No point is highlighted yet. Try first/last point depending on move
-                // direction
-                newPoint = next ? series[0].points[0] : lastPoint;
-            } else {
-                // We have a highlighted point.
-                // Find index of current point in series.points array. Necessary for
-                // dataGrouping (and maybe zoom?)
-                if (curPoints[curPointIndex] !== curPoint) {
-                    for (var i = 0; i < curPoints.length; ++i) {
-                        if (curPoints[i] === curPoint) {
-                            curPointIndex = i;
-                            break;
-                        }
-                    }
-                }
-
-                // Grab next/prev point & series
-                newSeries = series[curPoint.series.index + (next ? 1 : -1)];
-                newPoint = curPoints[curPointIndex + (next ? forwardSkipAmount : -1)] ||
-                    // Done with this series, try next one
-                    newSeries &&
-                    newSeries.points[next ? 0 : newSeries.points.length - (
-                        newSeries.connectEnds ? 2 : 1
-                    )];
-
-                // If there is no adjacent point, we return false
-                if (newPoint === undefined) {
-                    return false;
-                }
-            }
-
-            // Recursively skip null points or points in series that should be skipped
-            if (isSkipPoint(newPoint)) {
-                chart.highlightedPoint = newPoint;
-                return chart.highlightAdjacentPoint(next);
-            }
-
-            // There is an adjacent point, highlight it
-            return newPoint.highlight();
-        };
-
-
-        // Highlight first valid point in a series. Returns the point if successfully
-        // highlighted, otherwise false. If there is a highlighted point in the series,
-        // use that as starting point.
-        H.Series.prototype.highlightFirstValidPoint = function() {
-            var curPoint = this.chart.highlightedPoint,
-                start = curPoint.series === this ? curPoint.index : 0,
-                points = this.points;
-
-            for (var i = start, len = points.length; i < len; ++i) {
-                if (!isSkipPoint(points[i])) {
-                    return points[i].highlight();
-                }
-            }
-            for (var j = start; j >= 0; --j) {
-                if (!isSkipPoint(points[j])) {
-                    return points[j].highlight();
-                }
-            }
-            return false;
-        };
-
-
-        // Highlight next/previous series in chart. Returns false if no adjacent series
-        // in the direction, otherwise returns new highlighted point.
-        H.Chart.prototype.highlightAdjacentSeries = function(down) {
-            var chart = this,
-                newSeries,
-                newPoint,
-                adjacentNewPoint,
-                curPoint = chart.highlightedPoint,
-                lastSeries = chart.series && chart.series[chart.series.length - 1],
-                lastPoint = lastSeries && lastSeries.points &&
-                lastSeries.points[lastSeries.points.length - 1];
-
-            // If no point is highlighted, highlight the first/last point
-            if (!chart.highlightedPoint) {
-                newSeries = down ? (chart.series && chart.series[0]) : lastSeries;
-                newPoint = down ?
-                    (newSeries && newSeries.points && newSeries.points[0]) : lastPoint;
-                return newPoint ? newPoint.highlight() : false;
-            }
-
-            newSeries = chart.series[curPoint.series.index + (down ? -1 : 1)];
-
-            if (!newSeries) {
-                return false;
-            }
-
-            // We have a new series in this direction, find the right point
-            // Weigh xDistance as counting much higher than Y distance
-            newPoint = getClosestPoint(curPoint, newSeries, 4);
-
-            if (!newPoint) {
-                return false;
-            }
-
-            // New series and point exists, but we might want to skip it
-            if (!newSeries.visible) {
-                // Skip the series
-                newPoint.highlight();
-                adjacentNewPoint = chart.highlightAdjacentSeries(down); // Try recurse
-                if (!adjacentNewPoint) {
-                    // Recurse failed
-                    curPoint.highlight();
-                    return false;
-                }
-                // Recurse succeeded
-                return adjacentNewPoint;
-            }
-
-            // Highlight the new point or any first valid point back or forwards from it
-            newPoint.highlight();
-            return newPoint.series.highlightFirstValidPoint();
-        };
-
-
-        // Highlight the closest point vertically
-        H.Chart.prototype.highlightAdjacentPointVertical = function(down) {
-            var curPoint = this.highlightedPoint,
-                minDistance = Infinity,
-                bestPoint;
-
-            if (curPoint.plotX === undefined || curPoint.plotY === undefined) {
-                return false;
-            }
-            each(this.series, function(series) {
-                each(series.points, function(point) {
-                    if (point.plotY === undefined || point.plotX === undefined ||
-                        point === curPoint) {
-                        return;
-                    }
-                    var yDistance = point.plotY - curPoint.plotY,
-                        width = Math.abs(point.plotX - curPoint.plotX),
-                        distance = Math.abs(yDistance) * Math.abs(yDistance) +
-                        width * width * 4; // Weigh horizontal distance highly
-
-                    // Reverse distance number if axis is reversed
-                    if (series.yAxis.reversed) {
-                        yDistance *= -1;
-                    }
-
-                    if (
-                        yDistance < 0 && down || yDistance > 0 && !down || // Wrong dir
-                        distance < 5 || // Points in same spot => infinite loop
-                        isSkipPoint(point)
-                    ) {
-                        return;
-                    }
-
-                    if (distance < minDistance) {
-                        minDistance = distance;
-                        bestPoint = point;
-                    }
-                });
-            });
-
-            return bestPoint ? bestPoint.highlight() : false;
-        };
-
-
-        // Show the export menu and focus the first item (if exists)
-        H.Chart.prototype.showExportMenu = function() {
-            if (this.exportSVGElements && this.exportSVGElements[0]) {
-                this.exportSVGElements[0].element.onclick();
-                this.highlightExportItem(0);
-            }
-        };
-
-
-        // Hide export menu
-        H.Chart.prototype.hideExportMenu = function() {
-            var exportList = this.exportDivElements;
-            if (exportList) {
-                each(exportList, function(el) {
-                    fireEvent(el, 'mouseleave');
-                });
-                if (
-                    exportList[this.highlightedExportItem] &&
-                    exportList[this.highlightedExportItem].onmouseout
-                ) {
-                    exportList[this.highlightedExportItem].onmouseout();
-                }
-                this.highlightedExportItem = 0;
-                this.renderTo.focus();
-            }
-        };
-
-
-        // Highlight export menu item by index
-        H.Chart.prototype.highlightExportItem = function(ix) {
-            var listItem = this.exportDivElements && this.exportDivElements[ix],
-                curHighlighted =
-                this.exportDivElements &&
-                this.exportDivElements[this.highlightedExportItem];
-
-            if (
-                listItem &&
-                listItem.tagName === 'DIV' &&
-                !(listItem.children && listItem.children.length)
-            ) {
-                if (listItem.focus) {
-                    listItem.focus();
-                }
-                if (curHighlighted && curHighlighted.onmouseout) {
-                    curHighlighted.onmouseout();
-                }
-                if (listItem.onmouseover) {
-                    listItem.onmouseover();
-                }
-                this.highlightedExportItem = ix;
-                return true;
-            }
-        };
-
-
-        // Highlight range selector button by index
-        H.Chart.prototype.highlightRangeSelectorButton = function(ix) {
-            var buttons = this.rangeSelector.buttons;
-            // Deselect old
-            if (buttons[this.highlightedRangeSelectorItemIx]) {
-                buttons[this.highlightedRangeSelectorItemIx].setState(
-                    this.oldRangeSelectorItemState || 0
-                );
-            }
-            // Select new
-            this.highlightedRangeSelectorItemIx = ix;
-            if (buttons[ix]) {
-                this.setFocusToElement(buttons[ix].box, buttons[ix]);
-                this.oldRangeSelectorItemState = buttons[ix].state;
-                buttons[ix].setState(2);
-                return true;
-            }
-            return false;
-        };
-
-
-        // Highlight legend item by index
-        H.Chart.prototype.highlightLegendItem = function(ix) {
-            var items = this.legend.allItems,
-                oldIx = this.highlightedLegendItemIx;
-            if (items[ix]) {
-                if (items[oldIx]) {
-                    fireEvent(
-                        items[oldIx].legendGroup.element,
-                        'mouseout'
-                    );
-                }
-                this.highlightedLegendItemIx = ix;
-                this.setFocusToElement(items[ix].legendItem, items[ix].legendGroup);
-                fireEvent(items[ix].legendGroup.element, 'mouseover');
-                return true;
-            }
-            return false;
-        };
-
-
-        // Add keyboard navigation handling modules to chart
-        H.Chart.prototype.addKeyboardNavigationModules = function() {
-            var chart = this;
-
-            function navModuleFactory(id, keyMap, options) {
-                return new KeyboardNavigationModule(chart, merge({
-                    keyCodeMap: keyMap
-                }, {
-                    id: id
-                }, options));
-            }
-
-            // List of the different keyboard handling modes we use depending on where
-            // we are in the chart. Each mode has a set of handling functions mapped to
-            // key codes. Each mode determines when to move to the next/prev mode.
-            chart.keyboardNavigationModules = [
-                // Entry point catching the first tab, allowing users to tab into points
-                // more intuitively.
-                navModuleFactory('entry', []),
-
-                // Points
-                // Prevents default and ignores failure regardless
-                navModuleFactory('points', [
-                    // Left/Right
-                    [
-                        [37, 39],
-                        function(keyCode) {
-                            chart.highlightAdjacentPoint(keyCode === 39);
-                            return true;
-                        }
-                    ],
-                    // Up/Down
-                    [
-                        [38, 40],
-                        function(keyCode) {
-                            var highlightMethod = chart.highlightedPoint &&
-                                chart.highlightedPoint.series.keyboardMoveVertical ?
-                                'highlightAdjacentPointVertical' :
-                                'highlightAdjacentSeries';
-                            chart[highlightMethod](keyCode !== 38);
-                            return true;
-                        }
-                    ],
-                    // Enter/Spacebar
-                    [
-                        [13, 32],
-                        function() {
-                            if (chart.highlightedPoint) {
-                                chart.highlightedPoint.firePointEvent('click');
-                            }
-                        }
-                    ]
-                ], {
-                    // Always start highlighting from scratch when entering this module
-                    init: function() {
-                        delete chart.highlightedPoint;
-                        // Find first valid point to highlight
-                        for (var i = 0; i < chart.series.length; ++i) {
-                            for (var j = 0, len = chart.series[i].points &&
-                                    chart.series[i].points.length; j < len; ++j) {
-                                if (!isSkipPoint(chart.series[i].points[j])) {
-                                    return chart.series[i].points[j].highlight();
-                                }
-                            }
-                        }
-                    },
-                    // If leaving points, don't show tooltip anymore
-                    terminate: function() {
-                        if (chart.tooltip) {
-                            chart.tooltip.hide(0);
-                        }
-                        delete chart.highlightedPoint;
-                    }
-                }),
-
-                // Exporting
-                navModuleFactory('exporting', [
-                    // Left/Up
-                    [
-                        [37, 38],
-                        function() {
-                            var i = chart.highlightedExportItem || 0,
-                                reachedEnd = true;
-                            // Try to highlight prev item in list. Highlighting e.g.
-                            // separators will fail.
-                            while (i--) {
-                                if (chart.highlightExportItem(i)) {
-                                    reachedEnd = false;
-                                    break;
-                                }
-                            }
-                            if (reachedEnd) {
-                                chart.hideExportMenu();
-                                return this.move(-1);
-                            }
-                        }
-                    ],
-                    // Right/Down
-                    [
-                        [39, 40],
-                        function() {
-                            var highlightedExportItem = chart.highlightedExportItem || 0,
-                                reachedEnd = true;
-                            // Try to highlight next item in list. Highlighting e.g.
-                            // separators will fail.
-                            for (
-                                var i = highlightedExportItem + 1; i < chart.exportDivElements.length;
-                                ++i
-                            ) {
-                                if (chart.highlightExportItem(i)) {
-                                    reachedEnd = false;
-                                    break;
-                                }
-                            }
-                            if (reachedEnd) {
-                                chart.hideExportMenu();
-                                return this.move(1); // Next module
-                            }
-                        }
-                    ],
-                    // Enter/Spacebar
-                    [
-                        [13, 32],
-                        function() {
-                            fakeClickEvent(
-                                chart.exportDivElements[chart.highlightedExportItem]
-                            );
-                        }
-                    ]
-                ], {
-                    // Only run exporting navigation if exporting support exists and is
-                    // enabled on chart
-                    validate: function() {
-                        return (
-                            chart.exportChart &&
-                            !(
-                                chart.options.exporting &&
-                                chart.options.exporting.enabled === false
-                            )
-                        );
-                    },
-                    // Show export menu
-                    init: function(direction) {
-                        chart.highlightedPoint = null;
-                        chart.showExportMenu();
-                        // If coming back to export menu from other module, try to
-                        // highlight last item in menu
-                        if (direction < 0 && chart.exportDivElements) {
-                            for (var i = chart.exportDivElements.length; i > -1; --i) {
-                                if (chart.highlightExportItem(i)) {
-                                    break;
-                                }
-                            }
-                        }
-                    },
-                    // Hide the menu
-                    terminate: function() {
-                        chart.hideExportMenu();
-                    }
-                }),
-
-                // Map zoom
-                navModuleFactory('mapZoom', [
-                    // Up/down/left/right
-                    [
-                        [38, 40, 37, 39],
-                        function(keyCode) {
-                            chart[keyCode === 38 || keyCode === 40 ? 'yAxis' : 'xAxis'][0]
-                                .panStep(keyCode < 39 ? -1 : 1);
-                        }
-                    ],
-
-                    // Tabs
-                    [
-                        [9],
-                        function(keyCode, e) {
-                            var button;
-                            // Deselect old
-                            chart.mapNavButtons[chart.focusedMapNavButtonIx].setState(0);
-                            if (
-                                e.shiftKey && !chart.focusedMapNavButtonIx ||
-                                !e.shiftKey && chart.focusedMapNavButtonIx
-                            ) { // trying to go somewhere we can't?
-                                chart.mapZoom(); // Reset zoom
-                                // Nowhere to go, go to prev/next module
-                                return this.move(e.shiftKey ? -1 : 1);
-                            }
-                            chart.focusedMapNavButtonIx += e.shiftKey ? -1 : 1;
-                            button = chart.mapNavButtons[chart.focusedMapNavButtonIx];
-                            chart.setFocusToElement(button.box, button);
-                            button.setState(2);
-                        }
-                    ],
-
-                    // Enter/Spacebar
-                    [
-                        [13, 32],
-                        function() {
-                            fakeClickEvent(
-                                chart.mapNavButtons[chart.focusedMapNavButtonIx].element
-                            );
-                        }
-                    ]
-                ], {
-                    // Only run this module if we have map zoom on the chart
-                    validate: function() {
-                        return (
-                            chart.mapZoom &&
-                            chart.mapNavButtons &&
-                            chart.mapNavButtons.length === 2
-                        );
-                    },
-
-                    // Make zoom buttons do their magic
-                    init: function(direction) {
-                        var zoomIn = chart.mapNavButtons[0],
-                            zoomOut = chart.mapNavButtons[1],
-                            initialButton = direction > 0 ? zoomIn : zoomOut;
-
-                        each(chart.mapNavButtons, function(button, i) {
-                            button.element.setAttribute('tabindex', -1);
-                            button.element.setAttribute('role', 'button');
-                            button.element.setAttribute(
-                                'aria-label',
-                                'Zoom ' + (i ? 'out ' : '') + 'chart'
-                            );
-                        });
-
-                        chart.setFocusToElement(initialButton.box, initialButton);
-                        initialButton.setState(2);
-                        chart.focusedMapNavButtonIx = direction > 0 ? 0 : 1;
-                    }
-                }),
-
-                // Highstock range selector (minus input boxes)
-                navModuleFactory('rangeSelector', [
-                    // Left/Right/Up/Down
-                    [
-                        [37, 39, 38, 40],
-                        function(keyCode) {
-                            var direction = (keyCode === 37 || keyCode === 38) ? -1 : 1;
-                            // Try to highlight next/prev button
-                            if (!chart.highlightRangeSelectorButton(
-                                    chart.highlightedRangeSelectorItemIx + direction
-                                )) {
-                                return this.move(direction);
-                            }
-                        }
-                    ],
-                    // Enter/Spacebar
-                    [
-                        [13, 32],
-                        function() {
-                            // Don't allow click if button used to be disabled
-                            if (chart.oldRangeSelectorItemState !== 3) {
-                                fakeClickEvent(
-                                    chart.rangeSelector.buttons[
-                                        chart.highlightedRangeSelectorItemIx
-                                    ].element
-                                );
-                            }
-                        }
-                    ]
-                ], {
-                    // Only run this module if we have range selector
-                    validate: function() {
-                        return (
-                            chart.rangeSelector &&
-                            chart.rangeSelector.buttons &&
-                            chart.rangeSelector.buttons.length
-                        );
-                    },
-
-                    // Make elements focusable and accessible
-                    init: function(direction) {
-                        each(chart.rangeSelector.buttons, function(button) {
-                            button.element.setAttribute('tabindex', '-1');
-                            button.element.setAttribute('role', 'button');
-                            button.element.setAttribute(
-                                'aria-label',
-                                'Select range ' + (button.text && button.text.textStr)
-                            );
-                        });
-                        // Focus first/last button
-                        chart.highlightRangeSelectorButton(
-                            direction > 0 ? 0 : chart.rangeSelector.buttons.length - 1
-                        );
-                    }
-                }),
-
-                // Highstock range selector, input boxes
-                navModuleFactory('rangeSelectorInput', [
-                    // Tab/Up/Down
-                    [
-                        [9, 38, 40],
-                        function(keyCode, e) {
-                            var direction =
-                                (keyCode === 9 && e.shiftKey || keyCode === 38) ? -1 : 1,
-
-                                newIx = chart.highlightedInputRangeIx =
-                                chart.highlightedInputRangeIx + direction;
-
-                            // Try to highlight next/prev item in list.
-                            if (newIx > 1 || newIx < 0) { // Out of range
-                                return this.move(direction);
-                            }
-                            chart.rangeSelector[newIx ? 'maxInput' : 'minInput'].focus();
-                        }
-                    ]
-                ], {
-                    // Only run if we have range selector with input boxes
-                    validate: function() {
-                        var inputVisible = (
-                            chart.rangeSelector &&
-                            chart.rangeSelector.inputGroup &&
-                            chart.rangeSelector.inputGroup.element
-                            .getAttribute('visibility') !== 'hidden'
-                        );
-                        return (
-                            inputVisible &&
-                            chart.options.rangeSelector.inputEnabled !== false &&
-                            chart.rangeSelector.minInput &&
-                            chart.rangeSelector.maxInput
-                        );
-                    },
-
-                    // Highlight first/last input box
-                    init: function(direction) {
-                        chart.highlightedInputRangeIx = direction > 0 ? 0 : 1;
-                        chart.rangeSelector[
-                            chart.highlightedInputRangeIx ? 'maxInput' : 'minInput'
-                        ].focus();
-                    }
-                }),
-
-                // Legend navigation
-                navModuleFactory('legend', [
-                    // Left/Right/Up/Down
-                    [
-                        [37, 39, 38, 40],
-                        function(keyCode) {
-                            var direction = (keyCode === 37 || keyCode === 38) ? -1 : 1;
-                            // Try to highlight next/prev legend item
-                            if (!chart.highlightLegendItem(
-                                    chart.highlightedLegendItemIx + direction
-                                )) {
-                                return this.move(direction);
-                            }
-                        }
-                    ],
-                    // Enter/Spacebar
-                    [
-                        [13, 32],
-                        function() {
-                            fakeClickEvent(
-                                chart.legend.allItems[
-                                    chart.highlightedLegendItemIx
-                                ].legendItem.element.parentNode
-                            );
-                        }
-                    ]
-                ], {
-                    // Only run this module if we have at least one legend - wait for
-                    // it - item. Don't run if the legend is populated by a colorAxis.
-                    // Don't run if legend navigation is disabled.
-                    validate: function() {
-                        return chart.legend && chart.legend.allItems &&
-                            chart.legend.display &&
-                            !(chart.colorAxis && chart.colorAxis.length) &&
-                            (chart.options.legend &&
-                                chart.options.legend.keyboardNavigation &&
-                                chart.options.legend.keyboardNavigation.enabled) !== false;
-                    },
-
-                    // Make elements focusable and accessible
-                    init: function(direction) {
-                        each(chart.legend.allItems, function(item) {
-                            item.legendGroup.element.setAttribute('tabindex', '-1');
-                            item.legendGroup.element.setAttribute('role', 'button');
-                            item.legendGroup.element.setAttribute(
-                                'aria-label',
-                                stripTags('Toggle visibility of series ' + item.name)
-                            );
-                        });
-                        // Focus first/last item
-                        chart.highlightLegendItem(
-                            direction > 0 ? 0 : chart.legend.allItems.length - 1
-                        );
-                    }
-                })
-            ];
-        };
-
-
-        // Add exit anchor to the chart
-        // We use this to move focus out of chart whenever we want, by setting focus
-        // to this div and not preventing the default tab action.
-        // We also use this when users come back into the chart by tabbing back, in
-        // order to navigate from the end of the chart.
-        // Function returns the unbind function for the exit anchor's event handler.
-        H.Chart.prototype.addExitAnchor = function() {
-            var chart = this;
-            chart.tabExitAnchor = doc.createElement('div');
-            chart.tabExitAnchor.setAttribute('tabindex', '0');
-
-            // Hide exit anchor
-            merge(true, chart.tabExitAnchor.style, {
-                position: 'absolute',
-                left: '-9999px',
-                top: 'auto',
-                width: '1px',
-                height: '1px',
-                overflow: 'hidden'
-            });
-
-            chart.renderTo.appendChild(chart.tabExitAnchor);
-            return addEvent(chart.tabExitAnchor, 'focus',
-                function(ev) {
-                    var e = ev || win.event,
-                        curModule;
-
-                    // If focusing and we are exiting, do nothing once.
-                    if (!chart.exiting) {
-
-                        // Not exiting, means we are coming in backwards
-                        chart.renderTo.focus();
-                        e.preventDefault();
-
-                        // Move to last valid keyboard nav module
-                        // Note the we don't run it, just set the index
-                        chart.keyboardNavigationModuleIndex =
-                            chart.keyboardNavigationModules.length - 1;
-                        curModule = chart.keyboardNavigationModules[
-                            chart.keyboardNavigationModuleIndex
-                        ];
-
-                        // Validate the module
-                        if (curModule.validate && !curModule.validate()) {
-                            // Invalid.
-                            // Move inits next valid module in direction
-                            curModule.move(-1);
-                        } else {
-                            // We have a valid module, init it
-                            curModule.init(-1);
-                        }
-
-                    } else {
-                        // Don't skip the next focus, we only skip once.
-                        chart.exiting = false;
-                    }
-                }
-            );
-        };
-
-
-        // Add keyboard navigation events on chart load
-        H.Chart.prototype.callbacks.push(function(chart) {
-            var a11yOptions = chart.options.accessibility;
-            if (a11yOptions.enabled && a11yOptions.keyboardNavigation.enabled) {
-
-                // Init nav modules. We start at the first module, and as the user
-                // navigates through the chart the index will increase to use different
-                // handler modules.
-                chart.addKeyboardNavigationModules();
-                chart.keyboardNavigationModuleIndex = 0;
-
-                // Make chart container reachable by tab
-                if (
-                    chart.container.hasAttribute &&
-                    !chart.container.hasAttribute('tabIndex')
-                ) {
-                    chart.container.setAttribute('tabindex', '0');
-                }
-
-                // Add tab exit anchor
-                if (!chart.tabExitAnchor) {
-                    chart.unbindExitAnchorFocus = chart.addExitAnchor();
-                }
-
-                // Handle keyboard events by routing them to active keyboard nav module
-                chart.unbindKeydownHandler = addEvent(chart.renderTo, 'keydown',
-                    function(ev) {
-                        var e = ev || win.event,
-                            curNavModule = chart.keyboardNavigationModules[
-                                chart.keyboardNavigationModuleIndex
-                            ];
-                        // If there is a nav module for the current index, run it.
-                        // Otherwise, we are outside of the chart in some direction.
-                        if (curNavModule) {
-                            if (curNavModule.run(e)) {
-                                // Successfully handled this key event, stop default
-                                e.preventDefault();
-                            }
-                        }
-                    });
-
-                // Add cleanup handlers
-                addEvent(chart, 'destroy', function() {
-                    if (chart.unbindExitAnchorFocus && chart.tabExitAnchor) {
-                        chart.unbindExitAnchorFocus();
-                    }
-                    if (chart.unbindKeydownHandler && chart.renderTo) {
-                        chart.unbindKeydownHandler();
-                    }
-                });
-            }
-        });
-
-    }(Highcharts));
-}));
+/*
+ Highcharts JS v10.0.0 (2022-03-07)
+
+ Accessibility module
+
+ (c) 2010-2021 Highsoft AS
+ Author: Oystein Moseng
+
+ License: www.highcharts.com/license
+*/
+(function(a){"object"===typeof module&&module.exports?(a["default"]=a,module.exports=a):"function"===typeof define&&define.amd?define("highcharts/modules/accessibility",["highcharts"],function(t){a(t);a.Highcharts=t;return a}):a("undefined"!==typeof Highcharts?Highcharts:void 0)})(function(a){function t(a,h,r,q){a.hasOwnProperty(h)||(a[h]=q.apply(null,r),"function"===typeof CustomEvent&&window.dispatchEvent(new CustomEvent("HighchartsModuleLoaded",{detail:{path:h,module:a[h]}})))}a=a?a._modules:{};
+t(a,"Accessibility/A11yI18n.js",[a["Core/FormatUtilities.js"],a["Core/Utilities.js"]],function(a,h){var k=a.format,q=h.pick,m;(function(a){function m(a,c){var e=a.indexOf("#each("),d=a.indexOf("#plural("),b=a.indexOf("["),f=a.indexOf("]");if(-1<e){f=a.slice(e).indexOf(")")+e;d=a.substring(0,e);b=a.substring(f+1);f=a.substring(e+6,f).split(",");e=Number(f[1]);a="";if(c=c[f[0]])for(e=isNaN(e)?c.length:e,e=0>e?c.length+e:Math.min(e,c.length),f=0;f<e;++f)a+=d+c[f]+b;return a.length?a:""}if(-1<d){b=a.slice(d).indexOf(")")+
+d;d=a.substring(d+8,b).split(",");switch(Number(c[d[0]])){case 0:a=q(d[4],d[1]);break;case 1:a=q(d[2],d[1]);break;case 2:a=q(d[3],d[1]);break;default:a=d[1]}a?(c=a,c=c.trim&&c.trim()||c.replace(/^\s+|\s+$/g,"")):c="";return c}return-1<b?(d=a.substring(0,b),b=Number(a.substring(b+1,f)),a=void 0,c=c[d],!isNaN(b)&&c&&(0>b?(a=c[c.length+b],"undefined"===typeof a&&(a=c[0])):(a=c[b],"undefined"===typeof a&&(a=c[c.length-1]))),"undefined"!==typeof a?a:""):"{"+a+"}"}function v(a,c,e){var d=function(b,d){b=
+b.slice(d||0);var f=b.indexOf("{"),c=b.indexOf("}");if(-1<f&&c>f)return{statement:b.substring(f+1,c),begin:d+f+1,end:d+c}},b=[],f=0;do{var u=d(a,f);var y=a.substring(f,u&&u.begin-1);y.length&&b.push({value:y,type:"constant"});u&&b.push({value:u.statement,type:"statement"});f=u?u.end+1:f+1}while(u);b.forEach(function(b){"statement"===b.type&&(b.value=m(b.value,c))});return k(b.reduce(function(b,d){return b+d.value},""),c,e)}function g(a,c){a=a.split(".");for(var e=this.options.lang,d=0;d<a.length;++d)e=
+e&&e[a[d]];return"string"===typeof e?v(e,c,this):""}var n=[];a.compose=function(a){-1===n.indexOf(a)&&(n.push(a),a.prototype.langFormat=g);return a};a.i18nFormat=v})(m||(m={}));return m});t(a,"Accessibility/Utils/HTMLUtilities.js",[a["Core/Globals.js"],a["Core/Utilities.js"]],function(a,h){function k(a){if("function"===typeof w.MouseEvent)return new w.MouseEvent(a.type,a);if(m.createEvent){var v=m.createEvent("MouseEvent");if(v.initMouseEvent)return v.initMouseEvent(a.type,a.bubbles,a.cancelable,
+a.view||w,a.detail,a.screenX,a.screenY,a.clientX,a.clientY,a.ctrlKey,a.altKey,a.shiftKey,a.metaKey,a.button,a.relatedTarget),v}return q(a.type)}function q(a,g){g=g||{x:0,y:0};if("function"===typeof w.MouseEvent)return new w.MouseEvent(a,{bubbles:!0,cancelable:!0,composed:!0,view:w,detail:"click"===a?1:0,screenX:g.x,screenY:g.y,clientX:g.x,clientY:g.y});if(m.createEvent){var v=m.createEvent("MouseEvent");if(v.initMouseEvent)return v.initMouseEvent(a,!0,!0,w,"click"===a?1:0,g.x,g.y,g.x,g.y,!1,!1,!1,
+!1,0,null),v}return{type:a}}var m=a.doc,w=a.win,C=h.css;return{addClass:function(a,g){a.classList?a.classList.add(g):0>a.className.indexOf(g)&&(a.className+=" "+g)},cloneMouseEvent:k,cloneTouchEvent:function(a){var g=function(a){for(var g=[],c=0;c<a.length;++c){var e=a.item(c);e&&g.push(e)}return g};if("function"===typeof w.TouchEvent)return g=new w.TouchEvent(a.type,{touches:g(a.touches),targetTouches:g(a.targetTouches),changedTouches:g(a.changedTouches),ctrlKey:a.ctrlKey,shiftKey:a.shiftKey,altKey:a.altKey,
+metaKey:a.metaKey,bubbles:a.bubbles,cancelable:a.cancelable,composed:a.composed,detail:a.detail,view:a.view}),a.defaultPrevented&&g.preventDefault(),g;g=k(a);g.touches=a.touches;g.changedTouches=a.changedTouches;g.targetTouches=a.targetTouches;return g},escapeStringForHTML:function(a){return a.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;").replace(/\//g,"&#x2F;")},getElement:function(a){return m.getElementById(a)},getFakeMouseEvent:q,
+getHeadingTagNameForElement:function(a){var g=function(a){a=parseInt(a.slice(1),10);return"h"+Math.min(6,a+1)},v=function(a){var c;a:{for(c=a;c=c.previousSibling;){var e=c.tagName||"";if(/H[1-6]/.test(e)){c=e;break a}}c=""}if(c)return g(c);a=a.parentElement;if(!a)return"p";c=a.tagName;return/H[1-6]/.test(c)?g(c):v(a)};return v(a)},removeChildNodes:function(a){for(;a.lastChild;)a.removeChild(a.lastChild)},removeClass:function(a,g){a.classList?a.classList.remove(g):a.className=a.className.replace(new RegExp(g,
+"g"),"")},removeElement:function(a){a&&a.parentNode&&a.parentNode.removeChild(a)},reverseChildNodes:function(a){for(var g=a.childNodes.length;g--;)a.appendChild(a.childNodes[g])},stripHTMLTagsFromString:function(a){return"string"===typeof a?a.replace(/<\/?[^>]+(>|$)/g,""):a},visuallyHideElement:function(a){C(a,{position:"absolute",width:"1px",height:"1px",overflow:"hidden",whiteSpace:"nowrap",clip:"rect(1px, 1px, 1px, 1px)",marginTop:"-3px","-ms-filter":"progid:DXImageTransform.Microsoft.Alpha(Opacity=1)",
+filter:"alpha(opacity=1)",opacity:.01})}}});t(a,"Accessibility/Utils/ChartUtilities.js",[a["Core/Globals.js"],a["Accessibility/Utils/HTMLUtilities.js"],a["Core/Utilities.js"]],function(a,h,r){function k(b,f){var a=f.type,c=b.hcEvents;n.createEvent&&(b.dispatchEvent||b.fireEvent)?b.dispatchEvent?b.dispatchEvent(f):b.fireEvent(a,f):c&&c[a]?d(b,a,f):b.element&&k(b.element,f)}function m(b){var d=b.chart,a={},c="Seconds";a.Seconds=((b.max||0)-(b.min||0))/1E3;a.Minutes=a.Seconds/60;a.Hours=a.Minutes/60;
+a.Days=a.Hours/24;["Minutes","Hours","Days"].forEach(function(b){2<a[b]&&(c=b)});var e=a[c].toFixed("Seconds"!==c&&"Minutes"!==c?1:0);return d.langFormat("accessibility.axis.timeRange"+c,{chart:d,axis:b,range:e.replace(".0","")})}function w(b){var d=b.chart,a=d.options,c=a&&a.accessibility&&a.accessibility.screenReaderSection.axisRangeDateFormat||"";a=function(f){return b.dateTime?d.time.dateFormat(c,b[f]):b[f]};return d.langFormat("accessibility.axis.rangeFromTo",{chart:d,axis:b,rangeFrom:a("min"),
+rangeTo:a("max")})}function C(b){if(b.points&&b.points.length)return(b=e(b.points,function(b){return!!b.graphic}))&&b.graphic&&b.graphic.element}function v(b){var d=C(b);return d&&d.parentNode||b.graph&&b.graph.element||b.group&&b.group.element}function g(b,d){d.setAttribute("aria-hidden",!1);d!==b.renderTo&&d.parentNode&&d.parentNode!==n.body&&(Array.prototype.forEach.call(d.parentNode.childNodes,function(b){b.hasAttribute("aria-hidden")||b.setAttribute("aria-hidden",!0)}),g(b,d.parentNode))}var n=
+a.doc,x=h.stripHTMLTagsFromString,c=r.defined,e=r.find,d=r.fireEvent;return{fireEventOnWrappedOrUnwrappedElement:k,getChartTitle:function(b){return x(b.options.title.text||b.langFormat("accessibility.defaultChartTitle",{chart:b}))},getAxisDescription:function(b){return b&&(b.userOptions&&b.userOptions.accessibility&&b.userOptions.accessibility.description||b.axisTitle&&b.axisTitle.textStr||b.options.id||b.categories&&"categories"||b.dateTime&&"Time"||"values")},getAxisRangeDescription:function(b){var d=
+b.options||{};return d.accessibility&&"undefined"!==typeof d.accessibility.rangeDescription?d.accessibility.rangeDescription:b.categories?(d=b.chart,b=b.dataMax&&b.dataMin?d.langFormat("accessibility.axis.rangeCategories",{chart:d,axis:b,numCategories:b.dataMax-b.dataMin+1}):"",b):!b.dateTime||0!==b.min&&0!==b.dataMin?w(b):m(b)},getPointFromXY:function(b,d,a){for(var f=b.length,c;f--;)if(c=e(b[f].points||[],function(b){return b.x===d&&b.y===a}))return c},getSeriesFirstPointElement:C,getSeriesFromName:function(b,
+d){return d?(b.series||[]).filter(function(b){return b.name===d}):b.series},getSeriesA11yElement:v,unhideChartElementFromAT:g,hideSeriesFromAT:function(b){(b=v(b))&&b.setAttribute("aria-hidden",!0)},scrollToPoint:function(b){var a=b.series.xAxis,e=b.series.yAxis,y=a&&a.scrollbar?a:e;if((a=y&&y.scrollbar)&&c(a.to)&&c(a.from)){e=a.to-a.from;if(c(y.dataMin)&&c(y.dataMax)){var g=y.toPixels(y.dataMin),x=y.toPixels(y.dataMax);b=(y.toPixels(b["xAxis"===y.coll?"x":"y"]||0)-g)/(x-g)}else b=0;a.updatePosition(b-
+e/2,b+e/2);d(a,"changed",{from:a.from,to:a.to,trigger:"scrollbar",DOMEvent:null})}}}});t(a,"Accessibility/Utils/DOMElementProvider.js",[a["Core/Globals.js"],a["Accessibility/Utils/HTMLUtilities.js"]],function(a,h){var k=a.doc,q=h.removeElement;return function(){function a(){this.elements=[]}a.prototype.createElement=function(){var a=k.createElement.apply(k,arguments);this.elements.push(a);return a};a.prototype.destroyCreatedElements=function(){this.elements.forEach(function(a){q(a)});this.elements=
+[]};return a}()});t(a,"Accessibility/Utils/EventProvider.js",[a["Core/Globals.js"],a["Core/Utilities.js"]],function(a,h){var k=h.addEvent;return function(){function h(){this.eventRemovers=[]}h.prototype.addEvent=function(){var h=k.apply(a,arguments);this.eventRemovers.push(h);return h};h.prototype.removeAddedEvents=function(){this.eventRemovers.forEach(function(a){return a()});this.eventRemovers=[]};return h}()});t(a,"Accessibility/AccessibilityComponent.js",[a["Accessibility/Utils/ChartUtilities.js"],
+a["Accessibility/Utils/DOMElementProvider.js"],a["Accessibility/Utils/EventProvider.js"],a["Accessibility/Utils/HTMLUtilities.js"],a["Core/Utilities.js"]],function(a,h,r,q,m){var k=a.fireEventOnWrappedOrUnwrappedElement,C=q.getFakeMouseEvent;a=m.extend;q=function(){function a(){this.proxyProvider=this.keyCodes=this.eventProvider=this.domElementProvider=this.chart=void 0}a.prototype.initBase=function(a,n){this.chart=a;this.eventProvider=new r;this.domElementProvider=new h;this.proxyProvider=n;this.keyCodes=
+{left:37,right:39,up:38,down:40,enter:13,space:32,esc:27,tab:9,pageUp:33,pageDown:34,end:35,home:36}};a.prototype.addEvent=function(a,n,x,c){return this.eventProvider.addEvent(a,n,x,c)};a.prototype.createElement=function(a,n){return this.domElementProvider.createElement(a,n)};a.prototype.fakeClickEvent=function(a){var g=C("click");k(a,g)};a.prototype.destroyBase=function(){this.domElementProvider.destroyCreatedElements();this.eventProvider.removeAddedEvents()};return a}();a(q.prototype,{init:function(){},
+getKeyboardNavigation:function(){},onChartUpdate:function(){},onChartRender:function(){},destroy:function(){}});return q});t(a,"Accessibility/KeyboardNavigationHandler.js",[a["Core/Utilities.js"]],function(a){var h=a.find;a=function(){function a(a,h){this.chart=a;this.keyCodeMap=h.keyCodeMap||[];this.validate=h.validate;this.init=h.init;this.terminate=h.terminate;this.response={success:1,prev:2,next:3,noHandler:4,fail:5}}a.prototype.run=function(a){var k=a.which||a.keyCode,w=this.response.noHandler,
+r=h(this.keyCodeMap,function(a){return-1<a[0].indexOf(k)});r?w=r[1].call(this,k,a):9===k&&(w=this.response[a.shiftKey?"prev":"next"]);return w};return a}();"";return a});t(a,"Accessibility/Components/ContainerComponent.js",[a["Accessibility/AccessibilityComponent.js"],a["Accessibility/KeyboardNavigationHandler.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Core/Globals.js"],a["Accessibility/Utils/HTMLUtilities.js"]],function(a,h,r,q,m){var k=this&&this.__extends||function(){var a=function(c,e){a=
+Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(d,b){d.__proto__=b}||function(d,b){for(var a in b)b.hasOwnProperty(a)&&(d[a]=b[a])};return a(c,e)};return function(c,e){function d(){this.constructor=c}a(c,e);c.prototype=null===e?Object.create(e):(d.prototype=e.prototype,new d)}}(),C=r.unhideChartElementFromAT,v=r.getChartTitle,g=q.doc,n=m.stripHTMLTagsFromString;return function(a){function c(){return null!==a&&a.apply(this,arguments)||this}k(c,a);c.prototype.onChartUpdate=function(){this.handleSVGTitleElement();
+this.setSVGContainerLabel();this.setGraphicContainerAttrs();this.setRenderToAttrs();this.makeCreditsAccessible()};c.prototype.handleSVGTitleElement=function(){var a=this.chart,d="highcharts-title-"+a.index,b=n(a.langFormat("accessibility.svgContainerTitle",{chartTitle:v(a)}));if(b.length){var c=this.svgTitleElement=this.svgTitleElement||g.createElementNS("http://www.w3.org/2000/svg","title");c.textContent=b;c.id=d;a.renderTo.insertBefore(c,a.renderTo.firstChild)}};c.prototype.setSVGContainerLabel=
+function(){var a=this.chart,d=a.langFormat("accessibility.svgContainerLabel",{chartTitle:v(a)});a.renderer.box&&d.length&&a.renderer.box.setAttribute("aria-label",d)};c.prototype.setGraphicContainerAttrs=function(){var a=this.chart,d=a.langFormat("accessibility.graphicContainerLabel",{chartTitle:v(a)});d.length&&a.container.setAttribute("aria-label",d)};c.prototype.setRenderToAttrs=function(){var a=this.chart;"disabled"!==a.options.accessibility.landmarkVerbosity?a.renderTo.setAttribute("role","region"):
+a.renderTo.removeAttribute("role");a.renderTo.setAttribute("aria-label",a.langFormat("accessibility.chartContainerLabel",{title:v(a),chart:a}))};c.prototype.makeCreditsAccessible=function(){var a=this.chart,d=a.credits;d&&(d.textStr&&d.element.setAttribute("aria-label",a.langFormat("accessibility.credits",{creditsStr:n(d.textStr)})),C(a,d.element))};c.prototype.getKeyboardNavigation=function(){var a=this.chart;return new h(a,{keyCodeMap:[],validate:function(){return!0},init:function(){var d=a.accessibility;
+d&&d.keyboardNavigation.tabindexContainer.focus()}})};c.prototype.destroy=function(){this.chart.renderTo.setAttribute("aria-hidden",!0)};return c}(a)});t(a,"Accessibility/FocusBorder.js",[a["Core/Renderer/SVG/SVGLabel.js"],a["Core/Utilities.js"]],function(a,h){var k=h.addEvent,q=h.pick,m;(function(h){function m(){var a=this.focusElement,b=this.options.accessibility.keyboardNavigation.focusBorder;a&&(a.removeFocusBorder(),b.enabled&&a.addFocusBorder(b.margin,{stroke:b.style.color,strokeWidth:b.style.lineWidth,
+r:b.style.borderRadius}))}function v(a,b){var d=this.options.accessibility.keyboardNavigation.focusBorder;(b=b||a.element)&&b.focus&&(b.hcEvents&&b.hcEvents.focusin||k(b,"focusin",function(){}),b.focus(),d.hideBrowserFocusOutline&&(b.style.outline="none"));this.focusElement&&this.focusElement.removeFocusBorder();this.focusElement=a;this.renderFocusBorder()}function g(a){if(!a.focusBorderDestroyHook){var b=a.destroy;a.destroy=function(){a.focusBorder&&a.focusBorder.destroy&&a.focusBorder.destroy();
+return b.apply(a,arguments)};a.focusBorderDestroyHook=b}}function n(b,d){this.focusBorder&&this.removeFocusBorder();var c=this.getBBox(),f=q(b,3);c.x+=this.translateX?this.translateX:0;c.y+=this.translateY?this.translateY:0;var e=c.x-f,u=c.y-f,n=c.width+2*f,h=c.height+2*f,z=this instanceof a;if("text"===this.element.nodeName||z){var E=!!this.rotation;if(z)var D={x:E?1:0,y:0};else{var F=D=0;"middle"===this.attr("text-anchor")?D=F=.5:this.rotation?D=.25:F=.75;D={x:D,y:F}}F=+this.attr("x");var p=+this.attr("y");
+isNaN(F)||(e=F-c.width*D.x-f);isNaN(p)||(u=p-c.height*D.y-f);z&&E&&(z=n,n=h,h=z,isNaN(F)||(e=F-c.height*D.x-f),isNaN(p)||(u=p-c.width*D.y-f))}this.focusBorder=this.renderer.rect(e,u,n,h,parseInt((d&&d.r||0).toString(),10)).addClass("highcharts-focus-border").attr({zIndex:99}).add(this.parentGroup);this.renderer.styledMode||this.focusBorder.attr({stroke:d&&d.stroke,"stroke-width":d&&d.strokeWidth});x(this,b,d);g(this)}function x(a){for(var d=[],c=1;c<arguments.length;c++)d[c-1]=arguments[c];a.focusBorderUpdateHooks||
+(a.focusBorderUpdateHooks={},b.forEach(function(b){b+="Setter";var c=a[b]||a._defaultSetter;a.focusBorderUpdateHooks[b]=c;a[b]=function(){var b=c.apply(a,arguments);a.addFocusBorder.apply(a,d);return b}}))}function c(){e(this);this.focusBorderDestroyHook&&(this.destroy=this.focusBorderDestroyHook,delete this.focusBorderDestroyHook);this.focusBorder&&(this.focusBorder.destroy(),delete this.focusBorder)}function e(a){a.focusBorderUpdateHooks&&(Object.keys(a.focusBorderUpdateHooks).forEach(function(b){var d=
+a.focusBorderUpdateHooks[b];d===a._defaultSetter?delete a[b]:a[b]=d}),delete a.focusBorderUpdateHooks)}var d=[],b="x y transform width height r d stroke-width".split(" ");h.compose=function(a,b){-1===d.indexOf(a)&&(d.push(a),a=a.prototype,a.renderFocusBorder=m,a.setFocusToElement=v);-1===d.indexOf(b)&&(d.push(b),b=b.prototype,b.addFocusBorder=n,b.removeFocusBorder=c)}})(m||(m={}));return m});t(a,"Accessibility/Utils/Announcer.js",[a["Core/Renderer/HTML/AST.js"],a["Accessibility/Utils/DOMElementProvider.js"],
+a["Core/Globals.js"],a["Accessibility/Utils/HTMLUtilities.js"],a["Core/Utilities.js"]],function(a,h,r,q,m){var k=r.doc,C=q.addClass,v=q.visuallyHideElement,g=m.attr;return function(){function n(a,c){this.chart=a;this.domElementProvider=new h;this.announceRegion=this.addAnnounceRegion(c)}n.prototype.destroy=function(){this.domElementProvider.destroyCreatedElements()};n.prototype.announce=function(g){var c=this;a.setElementHTML(this.announceRegion,g);this.clearAnnouncementRegionTimer&&clearTimeout(this.clearAnnouncementRegionTimer);
+this.clearAnnouncementRegionTimer=setTimeout(function(){c.announceRegion.innerHTML=a.emptyHTML;delete c.clearAnnouncementRegionTimer},1E3)};n.prototype.addAnnounceRegion=function(a){var c=this.chart.announcerContainer||this.createAnnouncerContainer(),e=this.domElementProvider.createElement("div");g(e,{"aria-hidden":!1,"aria-live":a});this.chart.styledMode?C(e,"highcharts-visually-hidden"):v(e);c.appendChild(e);return e};n.prototype.createAnnouncerContainer=function(){var a=this.chart,c=k.createElement("div");
+g(c,{"aria-hidden":!1,"class":"highcharts-announcer-container"});c.style.position="relative";a.renderTo.insertBefore(c,a.renderTo.firstChild);return a.announcerContainer=c};return n}()});t(a,"Accessibility/Components/AnnotationsA11y.js",[a["Accessibility/Utils/HTMLUtilities.js"]],function(a){function h(a){return(a.annotations||[]).reduce(function(a,n){n.options&&!1!==n.options.visible&&(a=a.concat(n.labels));return a},[])}function k(a){return a.options&&a.options.accessibility&&a.options.accessibility.description||
+a.graphic&&a.graphic.text&&a.graphic.text.textStr||""}function q(a){var g=a.options&&a.options.accessibility&&a.options.accessibility.description;if(g)return g;g=a.chart;var n=k(a),h=a.points.filter(function(a){return!!a.graphic}).map(function(a){var b=a.accessibility&&a.accessibility.valueDescription||a.graphic&&a.graphic.element&&a.graphic.element.getAttribute("aria-label")||"";a=a&&a.series.name||"";return(a?a+", ":"")+"data point "+b}).filter(function(a){return!!a}),c=h.length,e="accessibility.screenReaderSection.annotations.description"+
+(1<c?"MultiplePoints":c?"SinglePoint":"NoPoints");a={annotationText:n,annotation:a,numPoints:c,annotationPoint:h[0],additionalAnnotationPoints:h.slice(1)};return g.langFormat(e,a)}function m(a){return h(a).map(function(a){return(a=w(C(q(a))))?"<li>"+a+"</li>":""})}var w=a.escapeStringForHTML,C=a.stripHTMLTagsFromString;return{getAnnotationsInfoHTML:function(a){var g=a.annotations;return g&&g.length?'<ul style="list-style-type: none">'+m(a).join(" ")+"</ul>":""},getAnnotationLabelDescription:q,getAnnotationListItems:m,
+getPointAnnotationTexts:function(a){var g=h(a.series.chart).filter(function(g){return-1<g.points.indexOf(a)});return g.length?g.map(function(a){return""+k(a)}):[]}}});t(a,"Accessibility/Components/InfoRegionsComponent.js",[a["Accessibility/A11yI18n.js"],a["Accessibility/AccessibilityComponent.js"],a["Accessibility/Utils/Announcer.js"],a["Accessibility/Components/AnnotationsA11y.js"],a["Core/Renderer/HTML/AST.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Core/FormatUtilities.js"],a["Core/Globals.js"],
+a["Accessibility/Utils/HTMLUtilities.js"],a["Core/Utilities.js"]],function(a,h,r,q,m,w,C,v,g,n){function x(a,b){var d=b[0],l=a.series&&a.series[0]||{};l={numSeries:a.series.length,numPoints:l.points&&l.points.length,chart:a,mapTitle:l.mapTitle};if(!d)return a.langFormat("accessibility.chartTypes.emptyChart",l);if("map"===d)return l.mapTitle?a.langFormat("accessibility.chartTypes.mapTypeDescription",l):a.langFormat("accessibility.chartTypes.unknownMap",l);if(1<a.types.length)return a.langFormat("accessibility.chartTypes.combinationChart",
+l);b=b[0];d=a.langFormat("accessibility.seriesTypeDescriptions."+b,l);var c=a.series&&2>a.series.length?"Single":"Multiple";return(a.langFormat("accessibility.chartTypes."+b+c,l)||a.langFormat("accessibility.chartTypes.default"+c,l))+(d?" "+d:"")}var c=this&&this.__extends||function(){var a=function(b,d){a=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(a,b){a.__proto__=b}||function(a,b){for(var d in b)b.hasOwnProperty(d)&&(a[d]=b[d])};return a(b,d)};return function(b,d){function l(){this.constructor=
+b}a(b,d);b.prototype=null===d?Object.create(d):(l.prototype=d.prototype,new l)}}(),e=q.getAnnotationsInfoHTML,d=w.getAxisDescription,b=w.getAxisRangeDescription,f=w.getChartTitle,u=w.unhideChartElementFromAT,y=C.format,k=v.doc,G=g.addClass,t=g.getElement,B=g.getHeadingTagNameForElement,I=g.stripHTMLTagsFromString,z=g.visuallyHideElement,E=n.attr,D=n.pick;return function(g){function p(){var a=null!==g&&g.apply(this,arguments)||this;a.announcer=void 0;a.screenReaderSections={};return a}c(p,g);p.prototype.init=
+function(){var a=this.chart,b=this;this.initRegionsDefinitions();this.addEvent(a,"aftergetTableAST",function(a){b.onDataTableCreated(a)});this.addEvent(a,"afterViewData",function(a){b.dataTableDiv=a;setTimeout(function(){b.focusDataTable()},300)});this.announcer=new r(a,"assertive")};p.prototype.initRegionsDefinitions=function(){var a=this;this.screenReaderSections={before:{element:null,buildContent:function(b){var d=b.options.accessibility.screenReaderSection.beforeChartFormatter;return d?d(b):a.defaultBeforeChartFormatter(b)},
+insertIntoDOM:function(a,b){b.renderTo.insertBefore(a,b.renderTo.firstChild)},afterInserted:function(){"undefined"!==typeof a.sonifyButtonId&&a.initSonifyButton(a.sonifyButtonId);"undefined"!==typeof a.dataTableButtonId&&a.initDataTableButton(a.dataTableButtonId)}},after:{element:null,buildContent:function(b){var d=b.options.accessibility.screenReaderSection.afterChartFormatter;return d?d(b):a.defaultAfterChartFormatter()},insertIntoDOM:function(a,b){b.renderTo.insertBefore(a,b.container.nextSibling)},
+afterInserted:function(){a.chart.accessibility&&a.chart.accessibility.keyboardNavigation.updateExitAnchor()}}}};p.prototype.onChartRender=function(){var a=this;this.linkedDescriptionElement=this.getLinkedDescriptionElement();this.setLinkedDescriptionAttrs();Object.keys(this.screenReaderSections).forEach(function(b){a.updateScreenReaderSection(b)})};p.prototype.getLinkedDescriptionElement=function(){var a=this.chart.options.accessibility.linkedDescription;if(a){if("string"!==typeof a)return a;a=y(a,
+this.chart);a=k.querySelectorAll(a);if(1===a.length)return a[0]}};p.prototype.setLinkedDescriptionAttrs=function(){var a=this.linkedDescriptionElement;a&&(a.setAttribute("aria-hidden","true"),G(a,"highcharts-linked-description"))};p.prototype.updateScreenReaderSection=function(a){var b=this.chart,d=this.screenReaderSections[a],c=d.buildContent(b),A=d.element=d.element||this.createElement("div"),e=A.firstChild||this.createElement("div");c?(this.setScreenReaderSectionAttribs(A,a),m.setElementHTML(e,
+c),A.appendChild(e),d.insertIntoDOM(A,b),b.styledMode?G(e,"highcharts-visually-hidden"):z(e),u(b,e),d.afterInserted&&d.afterInserted()):(A.parentNode&&A.parentNode.removeChild(A),delete d.element)};p.prototype.setScreenReaderSectionAttribs=function(a,b){var d=this.chart,c=d.langFormat("accessibility.screenReaderSection."+b+"RegionLabel",{chart:d,chartTitle:f(d)});E(a,{id:"highcharts-screen-reader-region-"+b+"-"+d.index,"aria-label":c});a.style.position="relative";"all"===d.options.accessibility.landmarkVerbosity&&
+c&&a.setAttribute("role","region")};p.prototype.defaultBeforeChartFormatter=function(){var b=this.chart,d=b.options.accessibility.screenReaderSection.beforeChartFormat;if(!d)return"";var c=this.getAxesDescription(),L=b.sonify&&b.options.sonification&&b.options.sonification.enabled,J="highcharts-a11y-sonify-data-btn-"+b.index,u="hc-linkto-highcharts-data-table-"+b.index,p=e(b),y=b.langFormat("accessibility.screenReaderSection.annotations.heading",{chart:b});c={headingTagName:B(b.renderTo),chartTitle:f(b),
+typeDescription:this.getTypeDescriptionText(),chartSubtitle:this.getSubtitleText(),chartLongdesc:this.getLongdescText(),xAxisDescription:c.xAxis,yAxisDescription:c.yAxis,playAsSoundButton:L?this.getSonifyButtonText(J):"",viewTableButton:b.getCSV?this.getDataTableButtonText(u):"",annotationsTitle:p?y:"",annotationsList:p};b=a.i18nFormat(d,c,b);this.dataTableButtonId=u;this.sonifyButtonId=J;return b.replace(/<(\w+)[^>]*?>\s*<\/\1>/g,"")};p.prototype.defaultAfterChartFormatter=function(){var b=this.chart,
+d=b.options.accessibility.screenReaderSection.afterChartFormat;if(!d)return"";var c={endOfChartMarker:this.getEndOfChartMarkerText()};return a.i18nFormat(d,c,b).replace(/<(\w+)[^>]*?>\s*<\/\1>/g,"")};p.prototype.getLinkedDescription=function(){var a=this.linkedDescriptionElement;return I(a&&a.innerHTML||"")};p.prototype.getLongdescText=function(){var a=this.chart.options,b=a.caption;b=b&&b.text;var d=this.getLinkedDescription();return a.accessibility.description||d||b||""};p.prototype.getTypeDescriptionText=
+function(){var a=this.chart;return a.types?a.options.accessibility.typeDescription||x(a,a.types):""};p.prototype.getDataTableButtonText=function(a){var b=this.chart;b=b.langFormat("accessibility.table.viewAsDataTableButtonText",{chart:b,chartTitle:f(b)});return'<button id="'+a+'">'+b+"</button>"};p.prototype.getSonifyButtonText=function(a){var b=this.chart;if(b.options.sonification&&!1===b.options.sonification.enabled)return"";b=b.langFormat("accessibility.sonification.playAsSoundButtonText",{chart:b,
+chartTitle:f(b)});return'<button id="'+a+'">'+b+"</button>"};p.prototype.getSubtitleText=function(){var a=this.chart.options.subtitle;return I(a&&a.text||"")};p.prototype.getEndOfChartMarkerText=function(){var a=this.chart,b=a.langFormat("accessibility.screenReaderSection.endOfChartMarker",{chart:a});return'<div id="highcharts-end-of-chart-marker-'+a.index+'">'+b+"</div>"};p.prototype.onDataTableCreated=function(a){var b=this.chart;if(b.options.accessibility.enabled){this.viewDataTableButton&&this.viewDataTableButton.setAttribute("aria-expanded",
+"true");var d=a.tree.attributes||{};d.tabindex=-1;d.summary=b.langFormat("accessibility.table.tableSummary",{chart:b});a.tree.attributes=d}};p.prototype.focusDataTable=function(){var a=this.dataTableDiv;(a=a&&a.getElementsByTagName("table")[0])&&a.focus&&a.focus()};p.prototype.initSonifyButton=function(a){var b=this,d=this.sonifyButton=t(a),c=this.chart,e=function(a){d&&(d.setAttribute("aria-hidden","true"),d.setAttribute("aria-label",""));a.preventDefault();a.stopPropagation();a=c.langFormat("accessibility.sonification.playAsSoundClickAnnouncement",
+{chart:c});b.announcer.announce(a);setTimeout(function(){d&&(d.removeAttribute("aria-hidden"),d.removeAttribute("aria-label"));c.sonify&&c.sonify()},1E3)};d&&c&&(d.setAttribute("tabindex",-1),d.onclick=function(a){(c.options.accessibility&&c.options.accessibility.screenReaderSection.onPlayAsSoundClick||e).call(this,a,c)})};p.prototype.initDataTableButton=function(a){var b=this.viewDataTableButton=t(a),d=this.chart;a=a.replace("hc-linkto-","");b&&(E(b,{tabindex:-1,"aria-expanded":!!t(a)}),b.onclick=
+d.options.accessibility.screenReaderSection.onViewDataTableClick||function(){d.viewData()})};p.prototype.getAxesDescription=function(){var a=this.chart,b=function(b,d){b=a[b];return 1<b.length||b[0]&&D(b[0].options.accessibility&&b[0].options.accessibility.enabled,d)},d=!!a.types&&0>a.types.indexOf("map"),c=!!a.hasCartesianSeries,e=b("xAxis",!a.angular&&c&&d);b=b("yAxis",c&&d);d={};e&&(d.xAxis=this.getAxisDescriptionText("xAxis"));b&&(d.yAxis=this.getAxisDescriptionText("yAxis"));return d};p.prototype.getAxisDescriptionText=
+function(a){var c=this.chart,e=c[a];return c.langFormat("accessibility.axis."+a+"Description"+(1<e.length?"Plural":"Singular"),{chart:c,names:e.map(function(a){return d(a)}),ranges:e.map(function(a){return b(a)}),numAxes:e.length})};p.prototype.destroy=function(){this.announcer&&this.announcer.destroy()};return p}(h)});t(a,"Accessibility/Components/MenuComponent.js",[a["Core/Chart/Chart.js"],a["Core/Utilities.js"],a["Accessibility/AccessibilityComponent.js"],a["Accessibility/KeyboardNavigationHandler.js"],
+a["Accessibility/Utils/ChartUtilities.js"],a["Accessibility/Utils/HTMLUtilities.js"]],function(a,h,r,q,m,w){var k=this&&this.__extends||function(){var a=function(c,d){a=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(a,d){a.__proto__=d}||function(a,d){for(var b in d)d.hasOwnProperty(b)&&(a[b]=d[b])};return a(c,d)};return function(c,d){function b(){this.constructor=c}a(c,d);c.prototype=null===d?Object.create(d):(b.prototype=d.prototype,new b)}}(),v=h.attr,g=m.getChartTitle,n=m.unhideChartElementFromAT,
+x=w.getFakeMouseEvent;h=function(a){function c(){return null!==a&&a.apply(this,arguments)||this}k(c,a);c.prototype.init=function(){var a=this.chart,b=this;this.addEvent(a,"exportMenuShown",function(){b.onMenuShown()});this.addEvent(a,"exportMenuHidden",function(){b.onMenuHidden()});this.createProxyGroup()};c.prototype.onMenuHidden=function(){var a=this.chart.exportContextMenu;a&&a.setAttribute("aria-hidden","true");this.setExportButtonExpandedState("false")};c.prototype.onMenuShown=function(){var a=
+this.chart,b=a.exportContextMenu;b&&(this.addAccessibleContextMenuAttribs(),n(a,b));this.setExportButtonExpandedState("true")};c.prototype.setExportButtonExpandedState=function(a){this.exportButtonProxy&&this.exportButtonProxy.buttonElement.setAttribute("aria-expanded",a)};c.prototype.onChartRender=function(){var a=this.chart,b=a.focusElement,c=a.accessibility;this.proxyProvider.clearGroup("chartMenu");this.proxyMenuButton();this.exportButtonProxy&&b&&b===a.exportingGroup&&(b.focusBorder?a.setFocusToElement(b,
+this.exportButtonProxy.buttonElement):c&&c.keyboardNavigation.tabindexContainer.focus())};c.prototype.proxyMenuButton=function(){var a=this.chart,b=this.proxyProvider,c=a.exportSVGElements&&a.exportSVGElements[0],e=a.options.exporting,y=a.exportSVGElements&&a.exportSVGElements[0];e&&!1!==e.enabled&&e.accessibility&&e.accessibility.enabled&&y&&y.element&&c&&(this.exportButtonProxy=b.addProxyElement("chartMenu",{click:c},{"aria-label":a.langFormat("accessibility.exporting.menuButtonLabel",{chart:a,
+chartTitle:g(a)}),"aria-expanded":!1,title:a.options.lang.contextButtonTitle||null}))};c.prototype.createProxyGroup=function(){this.chart&&this.proxyProvider&&this.proxyProvider.addGroup("chartMenu","div")};c.prototype.addAccessibleContextMenuAttribs=function(){var a=this.chart,b=a.exportDivElements;b&&b.length&&(b.forEach(function(a){a&&("LI"!==a.tagName||a.children&&a.children.length?a.setAttribute("aria-hidden","true"):a.setAttribute("tabindex",-1))}),(b=b[0]&&b[0].parentNode)&&v(b,{"aria-hidden":void 0,
+"aria-label":a.langFormat("accessibility.exporting.chartMenuLabel",{chart:a}),role:"list"}))};c.prototype.getKeyboardNavigation=function(){var a=this.keyCodes,b=this.chart,c=this;return new q(b,{keyCodeMap:[[[a.left,a.up],function(){return c.onKbdPrevious(this)}],[[a.right,a.down],function(){return c.onKbdNext(this)}],[[a.enter,a.space],function(){return c.onKbdClick(this)}]],validate:function(){return!!b.exporting&&!1!==b.options.exporting.enabled&&!1!==b.options.exporting.accessibility.enabled},
+init:function(){var a=c.exportButtonProxy,d=c.chart.exportingGroup;a&&d&&b.setFocusToElement(d,a.buttonElement)},terminate:function(){b.hideExportMenu()}})};c.prototype.onKbdPrevious=function(a){var b=this.chart,d=b.options.accessibility;a=a.response;for(var c=b.highlightedExportItemIx||0;c--;)if(b.highlightExportItem(c))return a.success;return d.keyboardNavigation.wrapAround?(b.highlightLastExportItem(),a.success):a.prev};c.prototype.onKbdNext=function(a){var b=this.chart,d=b.options.accessibility;
+a=a.response;for(var c=(b.highlightedExportItemIx||0)+1;c<b.exportDivElements.length;++c)if(b.highlightExportItem(c))return a.success;return d.keyboardNavigation.wrapAround?(b.highlightExportItem(0),a.success):a.next};c.prototype.onKbdClick=function(a){var b=this.chart,d=b.exportDivElements[b.highlightedExportItemIx],c=(b.exportSVGElements&&b.exportSVGElements[0]).element;b.openMenu?this.fakeClickEvent(d):(this.fakeClickEvent(c),b.highlightExportItem(0));return a.response.success};return c}(r);(function(c){function e(){var a=
+this.exportSVGElements&&this.exportSVGElements[0];if(a&&(a=a.element,a.onclick))a.onclick(x("click"))}function d(){var a=this.exportDivElements;a&&this.exportContextMenu&&this.openMenu&&(a.forEach(function(a){if(a&&"highcharts-menu-item"===a.className&&a.onmouseout)a.onmouseout(x("mouseout"))}),this.highlightedExportItemIx=0,this.exportContextMenu.hideMenu(),this.container.focus())}function b(a){var b=this.exportDivElements&&this.exportDivElements[a],d=this.exportDivElements&&this.exportDivElements[this.highlightedExportItemIx];
+if(b&&"LI"===b.tagName&&(!b.children||!b.children.length)){var c=!!(this.renderTo.getElementsByTagName("g")[0]||{}).focus;b.focus&&c&&b.focus();if(d&&d.onmouseout)d.onmouseout(x("mouseout"));if(b.onmouseover)b.onmouseover(x("mouseover"));this.highlightedExportItemIx=a;return!0}return!1}function f(){if(this.exportDivElements)for(var a=this.exportDivElements.length;a--;)if(this.highlightExportItem(a))return!0;return!1}var u=[];c.compose=function(c){-1===u.indexOf(c)&&(u.push(c),c=a.prototype,c.hideExportMenu=
+d,c.highlightExportItem=b,c.highlightLastExportItem=f,c.showExportMenu=e)}})(h||(h={}));return h});t(a,"Accessibility/KeyboardNavigation.js",[a["Core/Globals.js"],a["Accessibility/Components/MenuComponent.js"],a["Core/Utilities.js"],a["Accessibility/Utils/EventProvider.js"],a["Accessibility/Utils/HTMLUtilities.js"]],function(a,h,r,q,m){var k=a.doc,C=a.win,v=r.addEvent,g=r.fireEvent,n=m.getElement;r=function(){function a(a,e){this.components=this.chart=void 0;this.currentModuleIx=NaN;this.exitAnchor=
+this.eventProvider=void 0;this.modules=[];this.tabindexContainer=void 0;this.init(a,e)}a.prototype.init=function(a,e){var d=this,b=this.eventProvider=new q;this.chart=a;this.components=e;this.modules=[];this.currentModuleIx=0;this.update();b.addEvent(this.tabindexContainer,"keydown",function(a){return d.onKeydown(a)});b.addEvent(this.tabindexContainer,"focus",function(a){return d.onFocus(a)});["mouseup","touchend"].forEach(function(a){return b.addEvent(k,a,function(){return d.onMouseUp()})});["mousedown",
+"touchstart"].forEach(function(c){return b.addEvent(a.renderTo,c,function(){d.isClickingChart=!0})});b.addEvent(a.renderTo,"mouseover",function(){d.pointerIsOverChart=!0});b.addEvent(a.renderTo,"mouseout",function(){d.pointerIsOverChart=!1})};a.prototype.update=function(a){var c=this.chart.options.accessibility;c=c&&c.keyboardNavigation;var d=this.components;this.updateContainerTabindex();c&&c.enabled&&a&&a.length?(this.modules=a.reduce(function(a,c){c=d[c].getKeyboardNavigation();return a.concat(c)},
+[]),this.updateExitAnchor()):(this.modules=[],this.currentModuleIx=0,this.removeExitAnchor())};a.prototype.updateExitAnchor=function(){var a=n("highcharts-end-of-chart-marker-"+this.chart.index);this.removeExitAnchor();a?(this.makeElementAnExitAnchor(a),this.exitAnchor=a):this.createExitAnchor()};a.prototype.move=function(a){var c=this.modules&&this.modules[this.currentModuleIx];c&&c.terminate&&c.terminate(a);this.chart.focusElement&&this.chart.focusElement.removeFocusBorder();this.currentModuleIx+=
+a;if(c=this.modules&&this.modules[this.currentModuleIx]){if(c.validate&&!c.validate())return this.move(a);if(c.init)return c.init(a),!0}this.currentModuleIx=0;this.exiting=!0;0<a?this.exitAnchor.focus():this.tabindexContainer.focus();return!1};a.prototype.onFocus=function(a){var c=this.chart;a=a.relatedTarget&&c.container.contains(a.relatedTarget);this.exiting||this.tabbingInBackwards||this.isClickingChart||a||(a=this.getFirstValidModuleIx(),null!==a&&(this.currentModuleIx=a,this.modules[a].init(1)));
+this.exiting=!1};a.prototype.onMouseUp=function(){delete this.isClickingChart;if(!this.keyboardReset){var a=this.chart;if(!this.pointerIsOverChart){var e=this.modules&&this.modules[this.currentModuleIx||0];e&&e.terminate&&e.terminate();this.currentModuleIx=0}a.focusElement&&(a.focusElement.removeFocusBorder(),delete a.focusElement);this.keyboardReset=!0}};a.prototype.onKeydown=function(a){a=a||C.event;var c=this.modules&&this.modules.length&&this.modules[this.currentModuleIx],d;this.exiting=this.keyboardReset=
+!1;if(c){var b=c.run(a);b===c.response.success?d=!0:b===c.response.prev?d=this.move(-1):b===c.response.next&&(d=this.move(1));d&&(a.preventDefault(),a.stopPropagation())}};a.prototype.updateContainerTabindex=function(){var a=this.chart.options.accessibility;a=a&&a.keyboardNavigation;a=!(a&&!1===a.enabled);var e=this.chart,d=e.container;e.renderTo.hasAttribute("tabindex")&&(d.removeAttribute("tabindex"),d=e.renderTo);this.tabindexContainer=d;var b=d.getAttribute("tabindex");a&&!b?d.setAttribute("tabindex",
+"0"):a||e.container.removeAttribute("tabindex")};a.prototype.createExitAnchor=function(){var a=this.chart,e=this.exitAnchor=k.createElement("div");a.renderTo.appendChild(e);this.makeElementAnExitAnchor(e)};a.prototype.makeElementAnExitAnchor=function(a){var c=this.tabindexContainer.getAttribute("tabindex")||0;a.setAttribute("class","highcharts-exit-anchor");a.setAttribute("tabindex",c);a.setAttribute("aria-hidden",!1);this.addExitAnchorEventsToEl(a)};a.prototype.removeExitAnchor=function(){this.exitAnchor&&
+this.exitAnchor.parentNode&&(this.exitAnchor.parentNode.removeChild(this.exitAnchor),delete this.exitAnchor)};a.prototype.addExitAnchorEventsToEl=function(a){var c=this.chart,d=this;this.eventProvider.addEvent(a,"focus",function(a){a=a||C.event;var b=!(a.relatedTarget&&c.container.contains(a.relatedTarget)||d.exiting);c.focusElement&&delete c.focusElement;b?(d.tabbingInBackwards=!0,d.tabindexContainer.focus(),delete d.tabbingInBackwards,a.preventDefault(),d.modules&&d.modules.length&&(d.currentModuleIx=
+d.modules.length-1,(a=d.modules[d.currentModuleIx])&&a.validate&&!a.validate()?d.move(-1):a&&a.init(-1))):d.exiting=!1})};a.prototype.getFirstValidModuleIx=function(){for(var a=this.modules.length,e=0;e<a;++e){var d=this.modules[e];if(!d.validate||d.validate())return e}return null};a.prototype.destroy=function(){this.removeExitAnchor();this.eventProvider.removeAddedEvents();this.chart.container.removeAttribute("tabindex")};return a}();(function(n){function c(){var a=this;g(this,"dismissPopupContent",
+{},function(){a.tooltip&&a.tooltip.hide(0);a.hideExportMenu()})}function e(b){27===(b.which||b.keyCode)&&a.charts&&a.charts.forEach(function(a){a&&a.dismissPopupContent&&a.dismissPopupContent()})}var d=[];n.compose=function(a){h.compose(a);-1===d.indexOf(a)&&(d.push(a),a.prototype.dismissPopupContent=c);-1===d.indexOf(k)&&(d.push(k),v(k,"keydown",e));return a}})(r||(r={}));return r});t(a,"Accessibility/Components/LegendComponent.js",[a["Core/Animation/AnimationUtilities.js"],a["Core/Globals.js"],
+a["Core/Legend/Legend.js"],a["Core/Utilities.js"],a["Accessibility/AccessibilityComponent.js"],a["Accessibility/KeyboardNavigationHandler.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Accessibility/Utils/HTMLUtilities.js"]],function(a,h,r,q,m,w,C,v){function g(a){var b=a.legend&&a.legend.allItems,d=a.options.legend.accessibility||{};return!(!b||!b.length||a.colorAxis&&a.colorAxis.length||!1===d.enabled)}function n(a,d){d.setState(a?"hover":"",!0);["legendGroup","legendItem","legendSymbol"].forEach(function(c){(c=
+(c=d[c])&&c.element||c)&&b(c,a?"mouseover":"mouseout")})}var x=this&&this.__extends||function(){var a=function(b,d){a=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(a,b){a.__proto__=b}||function(a,b){for(var d in b)b.hasOwnProperty(d)&&(a[d]=b[d])};return a(b,d)};return function(b,d){function c(){this.constructor=b}a(b,d);b.prototype=null===d?Object.create(d):(c.prototype=d.prototype,new c)}}(),c=a.animObject,e=h.doc,d=q.addEvent,b=q.fireEvent,f=q.isNumber,u=q.pick,y=q.syncTimeout,
+k=C.getChartTitle,t=v.stripHTMLTagsFromString,H=v.addClass,B=v.removeClass;a=function(a){function b(){var b=null!==a&&a.apply(this,arguments)||this;b.highlightedLegendItemIx=NaN;b.proxyGroup=null;return b}x(b,a);b.prototype.init=function(){var a=this;this.recreateProxies();this.addEvent(r,"afterScroll",function(){this.chart===a.chart&&(a.proxyProvider.updateGroupProxyElementPositions("legend"),a.updateLegendItemProxyVisibility(),-1<a.highlightedLegendItemIx&&this.chart.highlightLegendItem(a.highlightedLegendItemIx))});
+this.addEvent(r,"afterPositionItem",function(b){this.chart===a.chart&&this.chart.renderer&&a.updateProxyPositionForItem(b.item)});this.addEvent(r,"afterRender",function(){this.chart===a.chart&&this.chart.renderer&&a.recreateProxies()&&y(function(){return a.proxyProvider.updateGroupProxyElementPositions("legend")},c(u(this.chart.renderer.globalAnimation,!0)).duration)})};b.prototype.updateLegendItemProxyVisibility=function(){var a=this.chart,b=a.legend,d=b.currentPage||1,c=b.clipHeight||0;(b.allItems||
+[]).forEach(function(e){if(e.a11yProxyElement){var l=e.a11yProxyElement.element,f=!1;if(b.pages&&b.pages.length){f=e.pageIx||0;var A=e._legendItemPos?e._legendItemPos[1]:0;e=e.legendItem?Math.round(e.legendItem.getBBox().height):0;f=A+e-b.pages[f]>c||f!==d-1}f?a.styledMode?H(l,"highcharts-a11y-invisible"):l.style.visibility="hidden":(B(l,"highcharts-a11y-invisible"),l.style.visibility="")}})};b.prototype.onChartRender=function(){g(this.chart)||this.removeProxies()};b.prototype.highlightAdjacentLegendPage=
+function(a){var b=this.chart,d=b.legend;a=(d.currentPage||1)+a;var c=d.pages||[];if(0<a&&a<=c.length){c=d.allItems.length;for(var e=0;e<c;++e)if(d.allItems[e].pageIx+1===a){b.highlightLegendItem(e)&&(this.highlightedLegendItemIx=e);break}}};b.prototype.updateProxyPositionForItem=function(a){a.a11yProxyElement&&a.a11yProxyElement.refreshPosition()};b.prototype.recreateProxies=function(){var a=e.activeElement,b=this.proxyGroup;a=a&&b&&b.contains(a);this.removeProxies();return g(this.chart)?(this.addLegendProxyGroup(),
+this.proxyLegendItems(),this.updateLegendItemProxyVisibility(),this.updateLegendTitle(),a&&this.chart.highlightLegendItem(this.highlightedLegendItemIx),!0):!1};b.prototype.removeProxies=function(){this.proxyProvider.removeGroup("legend")};b.prototype.updateLegendTitle=function(){var a=this.chart,b=t((a.legend&&a.legend.options.title&&a.legend.options.title.text||"").replace(/<br ?\/?>/g," "));a=a.langFormat("accessibility.legend.legendLabel"+(b?"":"NoTitle"),{chart:a,legendTitle:b,chartTitle:k(a)});
+this.proxyProvider.updateGroupAttrs("legend",{"aria-label":a})};b.prototype.addLegendProxyGroup=function(){this.proxyGroup=this.proxyProvider.addGroup("legend","ul",{"aria-label":"_placeholder_",role:"all"===this.chart.options.accessibility.landmarkVerbosity?"region":null})};b.prototype.proxyLegendItems=function(){var a=this;(this.chart.legend&&this.chart.legend.allItems||[]).forEach(function(b){b.legendItem&&b.legendItem.element&&a.proxyLegendItem(b)})};b.prototype.proxyLegendItem=function(a){if(a.legendItem&&
+a.legendGroup){var b=this.chart.langFormat("accessibility.legend.legendItem",{chart:this.chart,itemName:t(a.name),item:a});a.a11yProxyElement=this.proxyProvider.addProxyElement("legend",{click:a.legendItem,visual:(a.legendGroup.div?a.legendItem:a.legendGroup).element},{tabindex:-1,"aria-pressed":a.visible,"aria-label":b})}};b.prototype.getKeyboardNavigation=function(){var a=this.keyCodes,b=this,d=this.chart;return new w(d,{keyCodeMap:[[[a.left,a.right,a.up,a.down],function(a){return b.onKbdArrowKey(this,
+a)}],[[a.enter,a.space],function(d){return h.isFirefox&&d===a.space?this.response.success:b.onKbdClick(this)}],[[a.pageDown,a.pageUp],function(d){b.highlightAdjacentLegendPage(d===a.pageDown?1:-1);return this.response.success}]],validate:function(){return b.shouldHaveLegendNavigation()},init:function(){d.highlightLegendItem(0);b.highlightedLegendItemIx=0},terminate:function(){b.highlightedLegendItemIx=-1;d.legend.allItems.forEach(function(a){return n(!1,a)})}})};b.prototype.onKbdArrowKey=function(a,
+b){var d=this.keyCodes,c=a.response,e=this.chart,l=e.options.accessibility,f=e.legend.allItems.length;b=b===d.left||b===d.up?-1:1;if(e.highlightLegendItem(this.highlightedLegendItemIx+b))return this.highlightedLegendItemIx+=b,c.success;1<f&&l.keyboardNavigation.wrapAround&&a.init(b);return c.success};b.prototype.onKbdClick=function(a){var b=this.chart.legend.allItems[this.highlightedLegendItemIx];b&&b.a11yProxyElement&&b.a11yProxyElement.click();return a.response.success};b.prototype.shouldHaveLegendNavigation=
+function(){var a=this.chart,b=a.colorAxis&&a.colorAxis.length,d=(a.options.legend||{}).accessibility||{};return!!(a.legend&&a.legend.allItems&&a.legend.display&&!b&&d.enabled&&d.keyboardNavigation&&d.keyboardNavigation.enabled)};return b}(m);(function(a){function b(a){var b=this.legend.allItems,d=this.accessibility&&this.accessibility.components.legend.highlightedLegendItemIx,c=b[a];return c?(f(d)&&b[d]&&n(!1,b[d]),b=this.legend,a=b.allItems[a].pageIx,d=b.currentPage,"undefined"!==typeof a&&a+1!==
+d&&b.scroll(1+a-d),a=c.legendItem,b=c.a11yProxyElement&&c.a11yProxyElement.buttonElement,a&&a.element&&b&&this.setFocusToElement(a,b),n(!0,c),!0):!1}function c(a){var b=a.item;this.chart.options.accessibility.enabled&&b&&b.a11yProxyElement&&b.a11yProxyElement.buttonElement.setAttribute("aria-pressed",a.visible?"true":"false")}var e=[];a.compose=function(a,f){-1===e.indexOf(a)&&(e.push(a),a.prototype.highlightLegendItem=b);-1===e.indexOf(f)&&(e.push(f),d(f,"afterColorizeItem",c))}})(a||(a={}));return a});
+t(a,"Accessibility/Components/SeriesComponent/SeriesDescriber.js",[a["Accessibility/Components/AnnotationsA11y.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Core/FormatUtilities.js"],a["Accessibility/Utils/HTMLUtilities.js"],a["Core/Utilities.js"]],function(a,h,r,q,m){function k(a){var b=a.index;return a.series&&a.series.data&&A(b)?D(a.series.data,function(a){return!!(a&&"undefined"!==typeof a.index&&a.index>b&&a.graphic&&a.graphic.element)})||null:null}function C(a){var b=a.chart.options.accessibility.series.pointDescriptionEnabledThreshold;
+return!!(!1!==b&&a.points&&a.points.length>=b)}function v(a){var b=a.options.accessibility||{};return!C(a)&&!b.exposeAsGroupOnly}function g(a){var b=a.chart.options.accessibility.keyboardNavigation.seriesNavigation;return!(!a.points||!(a.points.length<b.pointNavigationEnabledThreshold||!1===b.pointNavigationEnabledThreshold))}function n(a,b){var d=a.series,c=d.chart;a=c.options.accessibility.point||{};var e=d.options.accessibility&&d.options.accessibility.point||{};d=d.tooltipOptions||{};c=c.options.lang;
+return F(b)?I(b,e.valueDecimals||a.valueDecimals||d.valueDecimals||-1,c.decimalPoint,c.accessibility.thousandsSep||c.thousandsSep):b}function x(a){var b=(a.options.accessibility||{}).description;return b&&a.chart.langFormat("accessibility.series.description",{description:b,series:a})||""}function c(a,b){return a.chart.langFormat("accessibility.series."+b+"Description",{name:y(a[b]),series:a})}function e(a,b,d){var c=b||"",e=d||"";return a.series.pointArrayMap.reduce(function(b,d){b+=b.length?", ":
+"";var l=n(a,p(a[d],a.options[d]));return b+(d+": "+c+l+e)},"")}function d(a){var b=a.series,d=1<b.chart.series.length||b.options.name,c=a.series;var f=c.chart;var l=c.options.accessibility;l=l&&l.point&&l.point.valueDescriptionFormat||f.options.accessibility.point.valueDescriptionFormat;c=p(c.xAxis&&c.xAxis.options.accessibility&&c.xAxis.options.accessibility.enabled,!f.angular);if(c){var g=a.series;var y=g.chart;var h=g.options.accessibility&&g.options.accessibility.point||{},k=y.options.accessibility.point||
+{};(g=g.xAxis&&g.xAxis.dateTime)?(g=g.getXDateFormat(a.x||0,y.options.tooltip.dateTimeLabelFormats),h=h.dateFormatter&&h.dateFormatter(a)||k.dateFormatter&&k.dateFormatter(a)||h.dateFormat||k.dateFormat||g,y=y.time.dateFormat(h,a.x||0,void 0)):y=void 0;h=(a.series.xAxis||{}).categories&&A(a.category)&&(""+a.category).replace("<br/>"," ");k=a.id&&0>a.id.indexOf("highcharts-");g="x, "+a.x;y=a.name||y||h||(k?a.id:g)}else y="";h=A(a.index)?a.index+1:"";k=a.series;var x=k.chart.options.accessibility.point||
+{},z=k.chart.options.accessibility&&k.chart.options.accessibility.point||{},m=k.tooltipOptions||{};g=z.valuePrefix||x.valuePrefix||m.valuePrefix||"";x=z.valueSuffix||x.valueSuffix||m.valueSuffix||"";z=n(a,a["undefined"!==typeof a.value?"value":"y"]);k=a.isNull?k.chart.langFormat("accessibility.series.nullPointValue",{point:a}):k.pointArrayMap?e(a,g,x):g+z+x;f=B(l,{point:a,index:h,xDescription:y,value:k,separator:c?", ":""},f);l=(l=a.options&&a.options.accessibility&&a.options.accessibility.description)?
+" "+l:"";b=d?" "+b.name+".":"";d=a.series.chart;c=u(a);y={point:a,annotations:c};d=c.length?d.langFormat("accessibility.series.pointAnnotationsDescription",y):"";a.accessibility=a.accessibility||{};a.accessibility.valueDescription=f;return f+l+b+(d?" "+d:"")}function b(a){var b=v(a),c=g(a);(b||c)&&a.points.forEach(function(c){var e;if(!(e=c.graphic&&c.graphic.element)&&(e=c.series&&c.series.is("sunburst"),e=c.isNull&&!e)){var f=c.series,l=k(c);f=(e=l&&l.graphic)?e.parentGroup:f.graph||f.group;l=l?
+{x:p(c.plotX,l.plotX,0),y:p(c.plotY,l.plotY,0)}:{x:p(c.plotX,0),y:p(c.plotY,0)};l=c.series.chart.renderer.rect(l.x,l.y,1,1);l.attr({"class":"highcharts-a11y-dummy-point",fill:"none",opacity:0,"fill-opacity":0,"stroke-opacity":0});f&&f.element?(c.graphic=l,c.hasDummyGraphic=!0,l.add(f),f.element.insertBefore(l.element,e?e.element:null),e=l.element):e=void 0}f=c.options&&c.options.accessibility&&!1===c.options.accessibility.enabled;e&&(e.setAttribute("tabindex","-1"),a.chart.styledMode||(e.style.outline=
+"none"),b&&!f?(l=c.series,f=l.chart.options.accessibility.point||{},l=l.options.accessibility&&l.options.accessibility.point||{},c=E(l.descriptionFormatter&&l.descriptionFormatter(c)||f.descriptionFormatter&&f.descriptionFormatter(c)||d(c)),e.setAttribute("role","img"),e.setAttribute("aria-label",c)):e.setAttribute("aria-hidden",!0))})}function f(a){var b=a.chart,d=b.types||[],e=x(a),f=function(d){return b[d]&&1<b[d].length&&a[d]},l=c(a,"xAxis"),A=c(a,"yAxis"),u={name:a.name||"",ix:a.index+1,numSeries:b.series&&
+b.series.length,numPoints:a.points&&a.points.length,series:a};d=1<d.length?"Combination":"";return(b.langFormat("accessibility.series.summary."+a.type+d,u)||b.langFormat("accessibility.series.summary.default"+d,u))+(e?" "+e:"")+(f("yAxis")?" "+A:"")+(f("xAxis")?" "+l:"")}var u=a.getPointAnnotationTexts,y=h.getAxisDescription,M=h.getSeriesFirstPointElement,t=h.getSeriesA11yElement,H=h.unhideChartElementFromAT,B=r.format,I=r.numberFormat,z=q.reverseChildNodes,E=q.stripHTMLTagsFromString,D=m.find,F=
+m.isNumber,p=m.pick,A=m.defined;return{defaultPointDescriptionFormatter:d,defaultSeriesDescriptionFormatter:f,describeSeries:function(a){var d=a.chart,c=M(a),e=t(a),l=d.is3d&&d.is3d();if(e){e.lastChild!==c||l||z(e);b(a);H(d,e);l=a.chart;d=l.options.chart;c=1<l.series.length;l=l.options.accessibility.series.describeSingleSeries;var A=(a.options.accessibility||{}).exposeAsGroupOnly;d.options3d&&d.options3d.enabled&&c||!(c||l||A||C(a))?e.setAttribute("aria-label",""):(d=a.chart.options.accessibility,
+c=d.landmarkVerbosity,(a.options.accessibility||{}).exposeAsGroupOnly?e.setAttribute("role","img"):"all"===c&&e.setAttribute("role","region"),e.setAttribute("tabindex","-1"),a.chart.styledMode||(e.style.outline="none"),e.setAttribute("aria-label",E(d.series.descriptionFormatter&&d.series.descriptionFormatter(a)||f(a))))}}}});t(a,"Accessibility/Components/SeriesComponent/NewDataAnnouncer.js",[a["Core/Globals.js"],a["Core/Utilities.js"],a["Accessibility/Utils/Announcer.js"],a["Accessibility/Utils/ChartUtilities.js"],
+a["Accessibility/Utils/EventProvider.js"],a["Accessibility/Components/SeriesComponent/SeriesDescriber.js"]],function(a,h,r,q,m,w){function k(a){var b=a.series.data.filter(function(b){return a.x===b.x&&a.y===b.y});return 1===b.length?b[0]:a}function v(a,b){var d=(a||[]).concat(b||[]).reduce(function(a,b){a[b.name+b.index]=b;return a},{});return Object.keys(d).map(function(a){return d[a]})}var g=h.addEvent,n=h.defined,x=q.getChartTitle,c=w.defaultPointDescriptionFormatter,e=w.defaultSeriesDescriptionFormatter;
+h=function(){function d(a){this.announcer=void 0;this.dirty={allSeries:{}};this.eventProvider=void 0;this.lastAnnouncementTime=0;this.chart=a}d.prototype.init=function(){var a=this.chart,d=a.options.accessibility.announceNewData.interruptUser?"assertive":"polite";this.lastAnnouncementTime=0;this.dirty={allSeries:{}};this.eventProvider=new m;this.announcer=new r(a,d);this.addEventListeners()};d.prototype.destroy=function(){this.eventProvider.removeAddedEvents();this.announcer.destroy()};d.prototype.addEventListeners=
+function(){var a=this,d=this.chart,c=this.eventProvider;c.addEvent(d,"afterApplyDrilldown",function(){a.lastAnnouncementTime=0});c.addEvent(d,"afterAddSeries",function(b){a.onSeriesAdded(b.series)});c.addEvent(d,"redraw",function(){a.announceDirtyData()})};d.prototype.onSeriesAdded=function(a){this.chart.options.accessibility.announceNewData.enabled&&(this.dirty.hasDirty=!0,this.dirty.allSeries[a.name+a.index]=a,this.dirty.newSeries=n(this.dirty.newSeries)?void 0:a)};d.prototype.announceDirtyData=
+function(){var a=this;if(this.chart.options.accessibility.announceNewData&&this.dirty.hasDirty){var d=this.dirty.newPoint;d&&(d=k(d));this.queueAnnouncement(Object.keys(this.dirty.allSeries).map(function(b){return a.dirty.allSeries[b]}),this.dirty.newSeries,d);this.dirty={allSeries:{}}}};d.prototype.queueAnnouncement=function(a,d,c){var b=this,e=this.chart.options.accessibility.announceNewData;if(e.enabled){var f=+new Date;e=Math.max(0,e.minAnnounceInterval-(f-this.lastAnnouncementTime));a=v(this.queuedAnnouncement&&
+this.queuedAnnouncement.series,a);if(d=this.buildAnnouncementMessage(a,d,c))this.queuedAnnouncement&&clearTimeout(this.queuedAnnouncementTimer),this.queuedAnnouncement={time:f,message:d,series:a},this.queuedAnnouncementTimer=setTimeout(function(){b&&b.announcer&&(b.lastAnnouncementTime=+new Date,b.announcer.announce(b.queuedAnnouncement.message),delete b.queuedAnnouncement,delete b.queuedAnnouncementTimer)},e)}};d.prototype.buildAnnouncementMessage=function(b,d,g){var f=this.chart,u=f.options.accessibility.announceNewData;
+if(u.announcementFormatter&&(b=u.announcementFormatter(b,d,g),!1!==b))return b.length?b:null;b=a.charts&&1<a.charts.length?"Multiple":"Single";b=d?"newSeriesAnnounce"+b:g?"newPointAnnounce"+b:"newDataAnnounce";u=x(f);return f.langFormat("accessibility.announceNewData."+b,{chartTitle:u,seriesDesc:d?e(d):null,pointDesc:g?c(g):null,point:g,series:d})};return d}();(function(a){function b(a){var b=this.chart,d=this.newDataAnnouncer;d&&d.chart===b&&b.options.accessibility.announceNewData.enabled&&(d.dirty.newPoint=
+n(d.dirty.newPoint)?void 0:a.point)}function d(){var a=this.chart,b=this.newDataAnnouncer;b&&b.chart===a&&a.options.accessibility.announceNewData.enabled&&(b.dirty.hasDirty=!0,b.dirty.allSeries[this.name+this.index]=this)}a.composedClasses=[];a.compose=function(c){-1===a.composedClasses.indexOf(c)&&(a.composedClasses.push(c),g(c,"addPoint",b),g(c,"updatedData",d))}})(h||(h={}));return h});t(a,"Accessibility/ProxyElement.js",[a["Core/Globals.js"],a["Core/Utilities.js"],a["Accessibility/Utils/EventProvider.js"],
+a["Accessibility/Utils/ChartUtilities.js"],a["Accessibility/Utils/HTMLUtilities.js"]],function(a,h,r,q,m){var k=a.doc,C=h.attr,v=h.css,g=h.merge,n=q.fireEventOnWrappedOrUnwrappedElement,x=m.cloneMouseEvent,c=m.cloneTouchEvent,e=m.getFakeMouseEvent,d=m.removeElement;return function(){function a(a,b,d,c){this.chart=a;this.target=b;this.groupType=d;d="ul"===d;this.eventProvider=new r;var e=d?k.createElement("li"):null,f=this.buttonElement=k.createElement("button");a.styledMode||this.hideButtonVisually(f);
+e?(d&&!a.styledMode&&(e.style.listStyle="none"),e.appendChild(f),this.element=e):this.element=f;this.updateTarget(b,c)}a.prototype.click=function(){var a=this.getTargetPosition();a.x+=a.width/2;a.y+=a.height/2;a=e("click",a);n(this.target.click,a)};a.prototype.updateTarget=function(a,b){this.target=a;this.updateCSSClassName();var d=b||{};Object.keys(d).forEach(function(a){null===d[a]&&delete d[a]});C(this.buttonElement,g({"aria-label":this.getTargetAttr(a.click,"aria-label")},d));this.eventProvider.removeAddedEvents();
+this.addProxyEventsToButton(this.buttonElement,a.click);this.refreshPosition()};a.prototype.refreshPosition=function(){var a=this.getTargetPosition();v(this.buttonElement,{width:(a.width||1)+"px",height:(a.height||1)+"px",left:(Math.round(a.x)||0)+"px",top:(Math.round(a.y)||0)+"px"})};a.prototype.remove=function(){this.eventProvider.removeAddedEvents();d(this.element)};a.prototype.updateCSSClassName=function(){var a=this.chart.legend;a=a.group&&a.group.div;a=-1<(a&&a.className||"").indexOf("highcharts-no-tooltip");
+var b=-1<(this.getTargetAttr(this.target.click,"class")||"").indexOf("highcharts-no-tooltip");this.buttonElement.className=a||b?"highcharts-a11y-proxy-button highcharts-no-tooltip":"highcharts-a11y-proxy-button"};a.prototype.addProxyEventsToButton=function(a,b){var d=this;"click touchstart touchend touchcancel touchmove mouseover mouseenter mouseleave mouseout".split(" ").forEach(function(e){var f=0===e.indexOf("touch");d.eventProvider.addEvent(a,e,function(a){var d=f?c(a):x(a);b&&n(b,d);a.stopPropagation();
+f||a.preventDefault()},{passive:!1})})};a.prototype.hideButtonVisually=function(a){v(a,{borderWidth:0,backgroundColor:"transparent",cursor:"pointer",outline:"none",opacity:.001,filter:"alpha(opacity=1)",zIndex:999,overflow:"hidden",padding:0,margin:0,display:"block",position:"absolute","-ms-filter":"progid:DXImageTransform.Microsoft.Alpha(Opacity=1)"})};a.prototype.getTargetPosition=function(){var a=this.target.click;a=a.element?a.element:a;a=this.target.visual||a;if(this.chart.renderTo&&a&&a.getBoundingClientRect){a=
+a.getBoundingClientRect();var b=this.chart.pointer.getChartPosition();return{x:(a.left-b.left)/b.scaleX,y:(a.top-b.top)/b.scaleY,width:a.right/b.scaleX-a.left/b.scaleX,height:a.bottom/b.scaleY-a.top/b.scaleY}}return{x:0,y:0,width:1,height:1}};a.prototype.getTargetAttr=function(a,b){return a.element?a.element.getAttribute(b):a.getAttribute(b)};return a}()});t(a,"Accessibility/ProxyProvider.js",[a["Core/Globals.js"],a["Core/Utilities.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Accessibility/Utils/DOMElementProvider.js"],
+a["Accessibility/Utils/HTMLUtilities.js"],a["Accessibility/ProxyElement.js"]],function(a,h,r,q,m,w){var k=a.doc,v=h.attr,g=h.css,n=r.unhideChartElementFromAT,x=m.removeElement,c=m.removeChildNodes;return function(){function a(a){this.chart=a;this.domElementProvider=new q;this.groups={};this.groupOrder=[];this.beforeChartProxyPosContainer=this.createProxyPosContainer("before");this.afterChartProxyPosContainer=this.createProxyPosContainer("after");this.update()}a.prototype.addProxyElement=function(a,
+b,c){var d=this.groups[a];if(!d)throw Error("ProxyProvider.addProxyElement: Invalid group key "+a);a=new w(this.chart,b,d.type,c);d.proxyContainerElement.appendChild(a.element);d.proxyElements.push(a);return a};a.prototype.addGroup=function(a,b,c){var d=this.groups[a];if(d)return d.groupElement;d=this.domElementProvider.createElement(b);if(c&&c.role&&"div"!==b){var e=this.domElementProvider.createElement("div");e.appendChild(d)}else e=d;e.className="highcharts-a11y-proxy-group highcharts-a11y-proxy-group-"+
+a.replace(/\W/g,"-");this.groups[a]={proxyContainerElement:d,groupElement:e,type:b,proxyElements:[]};v(e,c||{});"ul"===b&&d.setAttribute("role","list");this.afterChartProxyPosContainer.appendChild(e);this.updateGroupOrder(this.groupOrder);return e};a.prototype.updateGroupAttrs=function(a,b){var d=this.groups[a];if(!d)throw Error("ProxyProvider.updateGroupAttrs: Invalid group key "+a);v(d.groupElement,b)};a.prototype.updateGroupOrder=function(a){var b=this;this.groupOrder=a.slice();if(!this.isDOMOrderGroupOrder()){var d=
+a.indexOf("series"),e=-1<d?a.slice(0,d):a,g=-1<d?a.slice(d+1):[];a=k.activeElement;["before","after"].forEach(function(a){var d=b["before"===a?"beforeChartProxyPosContainer":"afterChartProxyPosContainer"];a="before"===a?e:g;c(d);a.forEach(function(a){(a=b.groups[a])&&d.appendChild(a.groupElement)})});(this.beforeChartProxyPosContainer.contains(a)||this.afterChartProxyPosContainer.contains(a))&&a&&a.focus&&a.focus()}};a.prototype.clearGroup=function(a){var b=this.groups[a];if(!b)throw Error("ProxyProvider.clearGroup: Invalid group key "+
+a);c(b.proxyContainerElement)};a.prototype.removeGroup=function(a){var b=this.groups[a];b&&(x(b.groupElement),delete this.groups[a])};a.prototype.update=function(){this.updatePosContainerPositions();this.updateGroupOrder(this.groupOrder);this.updateProxyElementPositions()};a.prototype.updateProxyElementPositions=function(){Object.keys(this.groups).forEach(this.updateGroupProxyElementPositions.bind(this))};a.prototype.updateGroupProxyElementPositions=function(a){(a=this.groups[a])&&a.proxyElements.forEach(function(a){return a.refreshPosition()})};
+a.prototype.destroy=function(){this.domElementProvider.destroyCreatedElements()};a.prototype.createProxyPosContainer=function(a){var b=this.domElementProvider.createElement("div");b.setAttribute("aria-hidden","false");b.className="highcharts-a11y-proxy-container"+(a?"-"+a:"");g(b,{top:"0",left:"0"});this.chart.styledMode||(b.style.whiteSpace="nowrap",b.style.position="absolute");return b};a.prototype.getCurrentGroupOrderInDOM=function(){var a=this,b=function(b){var d=[];b=b.children;for(var c=0;c<
+b.length;++c){a:{var e=b[c];for(var f=Object.keys(a.groups),g=f.length;g--;){var h=f[g],n=a.groups[h];if(n&&e===n.groupElement){e=h;break a}}e=void 0}e&&d.push(e)}return d},c=b(this.beforeChartProxyPosContainer);b=b(this.afterChartProxyPosContainer);c.push("series");return c.concat(b)};a.prototype.isDOMOrderGroupOrder=function(){var a=this,b=this.getCurrentGroupOrderInDOM(),c=this.groupOrder.filter(function(b){return"series"===b||!!a.groups[b]}),e=b.length;if(e!==c.length)return!1;for(;e--;)if(b[e]!==
+c[e])return!1;return!0};a.prototype.updatePosContainerPositions=function(){var a=this.chart;if(!a.renderer.forExport){var b=a.renderer.box;a.container.insertBefore(this.afterChartProxyPosContainer,b.nextSibling);a.container.insertBefore(this.beforeChartProxyPosContainer,b);n(this.chart,this.afterChartProxyPosContainer);n(this.chart,this.beforeChartProxyPosContainer)}};return a}()});t(a,"Extensions/RangeSelector.js",[a["Core/Axis/Axis.js"],a["Core/Chart/Chart.js"],a["Core/Globals.js"],a["Core/DefaultOptions.js"],
+a["Core/Renderer/SVG/SVGElement.js"],a["Core/Utilities.js"]],function(a,h,r,q,m,w){function k(a){if(-1!==a.indexOf("%L"))return"text";var b="aAdewbBmoyY".split("").some(function(b){return-1!==a.indexOf("%"+b)}),d="HkIlMS".split("").some(function(b){return-1!==a.indexOf("%"+b)});return b&&d?"datetime-local":b?"date":d?"time":"text"}var v=q.defaultOptions,g=w.addEvent,n=w.createElement,x=w.css,c=w.defined,e=w.destroyObjectProperties,d=w.discardElement,b=w.extend,f=w.find,u=w.fireEvent,y=w.isNumber,
+t=w.merge,G=w.objectEach,H=w.pad,B=w.pick,I=w.pInt,z=w.splat;b(v,{rangeSelector:{allButtonsEnabled:!1,buttons:void 0,buttonSpacing:5,dropdown:"responsive",enabled:void 0,verticalAlign:"top",buttonTheme:{width:28,height:18,padding:2,zIndex:7},floating:!1,x:0,y:0,height:void 0,inputBoxBorderColor:"none",inputBoxHeight:17,inputBoxWidth:void 0,inputDateFormat:"%b %e, %Y",inputDateParser:void 0,inputEditDateFormat:"%Y-%m-%d",inputEnabled:!0,inputPosition:{align:"right",x:0,y:0},inputSpacing:5,selected:void 0,
+buttonPosition:{align:"left",x:0,y:0},inputStyle:{color:"#335cad",cursor:"pointer"},labelStyle:{color:"#666666"}}});b(v.lang,{rangeSelectorZoom:"Zoom",rangeSelectorFrom:"",rangeSelectorTo:"\u2192"});var E=function(){function f(a){this.buttons=void 0;this.buttonOptions=f.prototype.defaultButtons;this.initialButtonGroupWidth=0;this.options=void 0;this.chart=a;this.init(a)}f.prototype.clickButton=function(b,d){var e=this.chart,l=this.buttonOptions[b],f=e.xAxis[0],A=e.scroller&&e.scroller.getUnionExtremes()||
+f||{},h=A.dataMin,n=A.dataMax,p=f&&Math.round(Math.min(f.max,B(n,f.max))),k=l.type;A=l._range;var x,m=l.dataGrouping;if(null!==h&&null!==n){e.fixedRange=A;this.setSelected(b);m&&(this.forcedDataGrouping=!0,a.prototype.setDataGrouping.call(f||{chart:this.chart},m,!1),this.frozenStates=l.preserveDataGrouping);if("month"===k||"year"===k)if(f){k={range:l,max:p,chart:e,dataMin:h,dataMax:n};var q=f.minFromRange.call(k);y(k.newMax)&&(p=k.newMax)}else A=l;else if(A)q=Math.max(p-A,h),p=Math.min(q+A,n);else if("ytd"===
+k)if(f)"undefined"===typeof n&&(h=Number.MAX_VALUE,n=Number.MIN_VALUE,e.series.forEach(function(a){a=a.xData;h=Math.min(a[0],h);n=Math.max(a[a.length-1],n)}),d=!1),p=this.getYTDExtremes(n,h,e.time.useUTC),q=x=p.min,p=p.max;else{this.deferredYTDClick=b;return}else"all"===k&&f&&(e.navigator&&e.navigator.baseSeries[0]&&(e.navigator.baseSeries[0].xAxis.options.range=void 0),q=h,p=n);c(q)&&(q+=l._offsetMin);c(p)&&(p+=l._offsetMax);this.dropdown&&(this.dropdown.selectedIndex=b+1);if(f)f.setExtremes(q,p,
+B(d,!0),void 0,{trigger:"rangeSelectorButton",rangeSelectorButton:l});else{var r=z(e.options.xAxis)[0];var v=r.range;r.range=A;var w=r.min;r.min=x;g(e,"load",function(){r.range=v;r.min=w})}u(this,"afterBtnClick")}};f.prototype.setSelected=function(a){this.selected=this.options.selected=a};f.prototype.init=function(a){var b=this,d=a.options.rangeSelector,c=d.buttons||b.defaultButtons.slice(),e=d.selected,f=function(){var a=b.minInput,d=b.maxInput;a&&a.blur&&u(a,"blur");d&&d.blur&&u(d,"blur")};b.chart=
+a;b.options=d;b.buttons=[];b.buttonOptions=c;this.eventsToUnbind=[];this.eventsToUnbind.push(g(a.container,"mousedown",f));this.eventsToUnbind.push(g(a,"resize",f));c.forEach(b.computeButtonRange);"undefined"!==typeof e&&c[e]&&this.clickButton(e,!1);this.eventsToUnbind.push(g(a,"load",function(){a.xAxis&&a.xAxis[0]&&g(a.xAxis[0],"setExtremes",function(d){this.max-this.min!==a.fixedRange&&"rangeSelectorButton"!==d.trigger&&"updatedData"!==d.trigger&&b.forcedDataGrouping&&!b.frozenStates&&this.setDataGrouping(!1,
+!1)})}))};f.prototype.updateButtonStates=function(){var a=this,b=this.chart,d=this.dropdown,c=b.xAxis[0],e=Math.round(c.max-c.min),f=!c.hasVisibleSeries,g=b.scroller&&b.scroller.getUnionExtremes()||c,h=g.dataMin,p=g.dataMax;b=a.getYTDExtremes(p,h,b.time.useUTC);var n=b.min,k=b.max,u=a.selected,x=y(u),m=a.options.allButtonsEnabled,z=a.buttons;a.buttonOptions.forEach(function(b,l){var A=b._range,g=b.type,J=b.count||1,L=z[l],K=0,N=b._offsetMax-b._offsetMin;b=l===u;var y=A>p-h,q=A<c.minRange,r=!1,B=!1;
+A=A===e;("month"===g||"year"===g)&&e+36E5>=864E5*{month:28,year:365}[g]*J-N&&e-36E5<=864E5*{month:31,year:366}[g]*J+N?A=!0:"ytd"===g?(A=k-n+N===e,r=!b):"all"===g&&(A=c.max-c.min>=p-h,B=!b&&x&&A);g=!m&&(y||q||B||f);J=b&&A||A&&!x&&!r||b&&a.frozenStates;g?K=3:J&&(x=!0,K=2);L.state!==K&&(L.setState(K),d&&(d.options[l+1].disabled=g,2===K&&(d.selectedIndex=l+1)),0===K&&u===l&&a.setSelected())})};f.prototype.computeButtonRange=function(a){var b=a.type,d=a.count||1,c={millisecond:1,second:1E3,minute:6E4,
+hour:36E5,day:864E5,week:6048E5};if(c[b])a._range=c[b]*d;else if("month"===b||"year"===b)a._range=864E5*{month:30,year:365}[b]*d;a._offsetMin=B(a.offsetMin,0);a._offsetMax=B(a.offsetMax,0);a._range+=a._offsetMax-a._offsetMin};f.prototype.getInputValue=function(a){a="min"===a?this.minInput:this.maxInput;var b=this.chart.options.rangeSelector,d=this.chart.time;return a?("text"===a.type&&b.inputDateParser||this.defaultInputDateParser)(a.value,d.useUTC,d):0};f.prototype.setInputValue=function(a,b){var d=
+this.options,e=this.chart.time,f="min"===a?this.minInput:this.maxInput;a="min"===a?this.minDateBox:this.maxDateBox;if(f){var l=f.getAttribute("data-hc-time");l=c(l)?Number(l):void 0;c(b)&&(c(l)&&f.setAttribute("data-hc-time-previous",l),f.setAttribute("data-hc-time",b),l=b);f.value=e.dateFormat(this.inputTypeFormats[f.type]||d.inputEditDateFormat,l);a&&a.attr({text:e.dateFormat(d.inputDateFormat,l)})}};f.prototype.setInputExtremes=function(a,b,d){if(a="min"===a?this.minInput:this.maxInput){var c=
+this.inputTypeFormats[a.type],e=this.chart.time;c&&(b=e.dateFormat(c,b),a.min!==b&&(a.min=b),d=e.dateFormat(c,d),a.max!==d&&(a.max=d))}};f.prototype.showInput=function(a){var b="min"===a?this.minDateBox:this.maxDateBox;if((a="min"===a?this.minInput:this.maxInput)&&b&&this.inputGroup){var d="text"===a.type,c=this.inputGroup,e=c.translateX;c=c.translateY;var f=this.options.inputBoxWidth;x(a,{width:d?b.width+(f?-2:20)+"px":"auto",height:d?b.height-2+"px":"auto",border:"2px solid silver"});d&&f?x(a,{left:e+
+b.x+"px",top:c+"px"}):x(a,{left:Math.min(Math.round(b.x+e-(a.offsetWidth-b.width)/2),this.chart.chartWidth-a.offsetWidth)+"px",top:c-(a.offsetHeight-b.height)/2+"px"})}};f.prototype.hideInput=function(a){(a="min"===a?this.minInput:this.maxInput)&&x(a,{top:"-9999em",border:0,width:"1px",height:"1px"})};f.prototype.defaultInputDateParser=function(a,b,d){var c=a.split("/").join("-").split(" ").join("T");-1===c.indexOf("T")&&(c+="T00:00");if(b)c+="Z";else{var e;if(e=r.isSafari)e=c,e=!(6<e.length&&(e.lastIndexOf("-")===
+e.length-6||e.lastIndexOf("+")===e.length-6));e&&(e=(new Date(c)).getTimezoneOffset()/60,c+=0>=e?"+"+H(-e)+":00":"-"+H(e)+":00")}c=Date.parse(c);y(c)||(a=a.split("-"),c=Date.UTC(I(a[0]),I(a[1])-1,I(a[2])));d&&b&&y(c)&&(c+=d.getTimezoneOffset(c));return c};f.prototype.drawInput=function(a){function d(){var b=g.getInputValue(a),d=c.xAxis[0],e=c.scroller&&c.scroller.xAxis?c.scroller.xAxis:d,f=e.dataMin;e=e.dataMax;var l=g.maxInput,A=g.minInput;b!==Number(z.getAttribute("data-hc-time-previous"))&&y(b)&&
+(z.setAttribute("data-hc-time-previous",b),u&&l&&y(f)?b>Number(l.getAttribute("data-hc-time"))?b=void 0:b<f&&(b=f):A&&y(e)&&(b<Number(A.getAttribute("data-hc-time"))?b=void 0:b>e&&(b=e)),"undefined"!==typeof b&&d.setExtremes(u?b:d.min,u?d.max:b,void 0,void 0,{trigger:"rangeSelectorInput"}))}var c=this.chart,e=this.div,f=this.inputGroup,g=this,A=c.renderer.style||{},h=c.renderer,p=c.options.rangeSelector,u="min"===a,m=v.lang[u?"rangeSelectorFrom":"rangeSelectorTo"]||"";m=h.label(m,0).addClass("highcharts-range-label").attr({padding:m?
+2:0,height:m?p.inputBoxHeight:0}).add(f);h=h.label("",0).addClass("highcharts-range-input").attr({padding:2,width:p.inputBoxWidth,height:p.inputBoxHeight,"text-align":"center"}).on("click",function(){g.showInput(a);g[a+"Input"].focus()});c.styledMode||h.attr({stroke:p.inputBoxBorderColor,"stroke-width":1});h.add(f);var z=n("input",{name:a,className:"highcharts-range-selector"},void 0,e);z.setAttribute("type",k(p.inputDateFormat||"%b %e, %Y"));c.styledMode||(m.css(t(A,p.labelStyle)),h.css(t({color:"#333333"},
+A,p.inputStyle)),x(z,b({position:"absolute",border:0,boxShadow:"0 0 15px rgba(0,0,0,0.3)",width:"1px",height:"1px",padding:0,textAlign:"center",fontSize:A.fontSize,fontFamily:A.fontFamily,top:"-9999em"},p.inputStyle)));z.onfocus=function(){g.showInput(a)};z.onblur=function(){z===r.doc.activeElement&&d();g.hideInput(a);g.setInputValue(a);z.blur()};var q=!1;z.onchange=function(){q||(d(),g.hideInput(a),z.blur())};z.onkeypress=function(a){13===a.keyCode&&d()};z.onkeydown=function(a){q=!0;38!==a.keyCode&&
+40!==a.keyCode||d()};z.onkeyup=function(){q=!1};return{dateBox:h,input:z,label:m}};f.prototype.getPosition=function(){var a=this.chart,b=a.options.rangeSelector;a="top"===b.verticalAlign?a.plotTop-a.axisOffset[0]:0;return{buttonTop:a+b.buttonPosition.y,inputTop:a+b.inputPosition.y-10}};f.prototype.getYTDExtremes=function(a,b,d){var c=this.chart.time,e=new c.Date(a),f=c.get("FullYear",e);d=d?c.Date.UTC(f,0,1):+new c.Date(f,0,1);b=Math.max(b,d);e=e.getTime();return{max:Math.min(a||e,e),min:b}};f.prototype.render=
+function(a,b){var d=this.chart,e=d.renderer,f=d.container,l=d.options,g=l.rangeSelector,h=B(l.chart.style&&l.chart.style.zIndex,0)+1;l=g.inputEnabled;if(!1!==g.enabled){this.rendered||(this.group=e.g("range-selector-group").attr({zIndex:7}).add(),this.div=n("div",void 0,{position:"relative",height:0,zIndex:h}),this.buttonOptions.length&&this.renderButtons(),f.parentNode&&f.parentNode.insertBefore(this.div,f),l&&(this.inputGroup=e.g("input-group").add(this.group),e=this.drawInput("min"),this.minDateBox=
+e.dateBox,this.minLabel=e.label,this.minInput=e.input,e=this.drawInput("max"),this.maxDateBox=e.dateBox,this.maxLabel=e.label,this.maxInput=e.input));if(l&&(this.setInputValue("min",a),this.setInputValue("max",b),a=d.scroller&&d.scroller.getUnionExtremes()||d.xAxis[0]||{},c(a.dataMin)&&c(a.dataMax)&&(d=d.xAxis[0].minRange||0,this.setInputExtremes("min",a.dataMin,Math.min(a.dataMax,this.getInputValue("max"))-d),this.setInputExtremes("max",Math.max(a.dataMin,this.getInputValue("min"))+d,a.dataMax)),
+this.inputGroup)){var A=0;[this.minLabel,this.minDateBox,this.maxLabel,this.maxDateBox].forEach(function(a){if(a){var b=a.getBBox().width;b&&(a.attr({x:A}),A+=b+g.inputSpacing)}})}this.alignElements();this.rendered=!0}};f.prototype.renderButtons=function(){var a=this,b=this.buttons,d=this.options,c=v.lang,e=this.chart.renderer,f=t(d.buttonTheme),h=f&&f.states,p=f.width||28;delete f.width;delete f.states;this.buttonGroup=e.g("range-selector-buttons").add(this.group);var k=this.dropdown=n("select",
+void 0,{position:"absolute",width:"1px",height:"1px",padding:0,border:0,top:"-9999em",cursor:"pointer",opacity:.0001},this.div);g(k,"touchstart",function(){k.style.fontSize="16px"});[[r.isMS?"mouseover":"mouseenter"],[r.isMS?"mouseout":"mouseleave"],["change","click"]].forEach(function(d){var c=d[0],e=d[1];g(k,c,function(){var d=b[a.currentButtonIndex()];d&&u(d.element,e||c)})});this.zoomText=e.label(c&&c.rangeSelectorZoom||"",0).attr({padding:d.buttonTheme.padding,height:d.buttonTheme.height,paddingLeft:0,
+paddingRight:0}).add(this.buttonGroup);this.chart.styledMode||(this.zoomText.css(d.labelStyle),f["stroke-width"]=B(f["stroke-width"],0));n("option",{textContent:this.zoomText.textStr,disabled:!0},void 0,k);this.buttonOptions.forEach(function(d,c){n("option",{textContent:d.title||d.text},void 0,k);b[c]=e.button(d.text,0,0,function(b){var e=d.events&&d.events.click,f;e&&(f=e.call(d,b));!1!==f&&a.clickButton(c);a.isActive=!0},f,h&&h.hover,h&&h.select,h&&h.disabled).attr({"text-align":"center",width:p}).add(a.buttonGroup);
+d.title&&b[c].attr("title",d.title)})};f.prototype.alignElements=function(){var a=this,b=this.buttonGroup,d=this.buttons,c=this.chart,e=this.group,f=this.inputGroup,g=this.options,h=this.zoomText,p=c.options,n=p.exporting&&!1!==p.exporting.enabled&&p.navigation&&p.navigation.buttonOptions;p=g.buttonPosition;var k=g.inputPosition,u=g.verticalAlign,z=function(b,d){return n&&a.titleCollision(c)&&"top"===u&&"right"===d.align&&d.y-b.getBBox().height-12<(n.y||0)+(n.height||0)+c.spacing[0]?-40:0},x=c.plotLeft;
+if(e&&p&&k){var m=p.x-c.spacing[3];if(b){this.positionButtons();if(!this.initialButtonGroupWidth){var y=0;h&&(y+=h.getBBox().width+5);d.forEach(function(a,b){y+=a.width;b!==d.length-1&&(y+=g.buttonSpacing)});this.initialButtonGroupWidth=y}x-=c.spacing[3];this.updateButtonStates();h=z(b,p);this.alignButtonGroup(h);e.placed=b.placed=c.hasLoaded}b=0;f&&(b=z(f,k),"left"===k.align?m=x:"right"===k.align&&(m=-Math.max(c.axisOffset[1],-b)),f.align({y:k.y,width:f.getBBox().width,align:k.align,x:k.x+m-2},!0,
+c.spacingBox),f.placed=c.hasLoaded);this.handleCollision(b);e.align({verticalAlign:u},!0,c.spacingBox);f=e.alignAttr.translateY;b=e.getBBox().height+20;z=0;"bottom"===u&&(z=(z=c.legend&&c.legend.options)&&"bottom"===z.verticalAlign&&z.enabled&&!z.floating?c.legend.legendHeight+B(z.margin,10):0,b=b+z-20,z=f-b-(g.floating?0:g.y)-(c.titleOffset?c.titleOffset[2]:0)-10);if("top"===u)g.floating&&(z=0),c.titleOffset&&c.titleOffset[0]&&(z=c.titleOffset[0]),z+=c.margin[0]-c.spacing[0]||0;else if("middle"===
+u)if(k.y===p.y)z=f;else if(k.y||p.y)z=0>k.y||0>p.y?z-Math.min(k.y,p.y):f-b;e.translate(g.x,g.y+Math.floor(z));p=this.minInput;k=this.maxInput;f=this.dropdown;g.inputEnabled&&p&&k&&(p.style.marginTop=e.translateY+"px",k.style.marginTop=e.translateY+"px");f&&(f.style.marginTop=e.translateY+"px")}};f.prototype.alignButtonGroup=function(a,b){var d=this.chart,c=this.buttonGroup,e=this.options.buttonPosition,f=d.plotLeft-d.spacing[3],g=e.x-d.spacing[3];"right"===e.align?g+=a-f:"center"===e.align&&(g-=f/
+2);c&&c.align({y:e.y,width:B(b,this.initialButtonGroupWidth),align:e.align,x:g},!0,d.spacingBox)};f.prototype.positionButtons=function(){var a=this.buttons,b=this.chart,d=this.options,c=this.zoomText,e=b.hasLoaded?"animate":"attr",f=d.buttonPosition,g=b.plotLeft,h=g;c&&"hidden"!==c.visibility&&(c[e]({x:B(g+f.x,g)}),h+=f.x+c.getBBox().width+5);this.buttonOptions.forEach(function(b,c){if("hidden"!==a[c].visibility)a[c][e]({x:h}),h+=a[c].width+d.buttonSpacing;else a[c][e]({x:g})})};f.prototype.handleCollision=
+function(a){var b=this,d=this.chart,c=this.buttonGroup,e=this.inputGroup,f=this.options,g=f.buttonPosition,h=f.dropdown,p=f.inputPosition;f=function(){var a=0;b.buttons.forEach(function(b){b=b.getBBox();b.width>a&&(a=b.width)});return a};var k=function(b){if(e&&c){var d=e.alignAttr.translateX+e.alignOptions.x-a+e.getBBox().x+2,f=e.alignOptions.width,l=c.alignAttr.translateX+c.getBBox().x;return l+b>d&&d+f>l&&g.y<p.y+e.getBBox().height}return!1},n=function(){e&&c&&e.attr({translateX:e.alignAttr.translateX+
+(d.axisOffset[1]>=-a?0:-a),translateY:e.alignAttr.translateY+c.getBBox().height+10})};if(c){if("always"===h){this.collapseButtons(a);k(f())&&n();return}"never"===h&&this.expandButtons()}e&&c?p.align===g.align||k(this.initialButtonGroupWidth+20)?"responsive"===h?(this.collapseButtons(a),k(f())&&n()):n():"responsive"===h&&this.expandButtons():c&&"responsive"===h&&(this.initialButtonGroupWidth>d.plotWidth?this.collapseButtons(a):this.expandButtons())};f.prototype.collapseButtons=function(a){var b=this.buttons,
+d=this.buttonOptions,c=this.chart,e=this.dropdown,f=this.options,g=this.zoomText,h=c.userOptions.rangeSelector&&c.userOptions.rangeSelector.buttonTheme||{},p=function(a){return{text:a?a+" \u25be":"\u25be",width:"auto",paddingLeft:B(f.buttonTheme.paddingLeft,h.padding,8),paddingRight:B(f.buttonTheme.paddingRight,h.padding,8)}};g&&g.hide();var k=!1;d.forEach(function(a,d){d=b[d];2!==d.state?d.hide():(d.show(),d.attr(p(a.text)),k=!0)});k||(e&&(e.selectedIndex=0),b[0].show(),b[0].attr(p(this.zoomText&&
+this.zoomText.textStr)));d=f.buttonPosition.align;this.positionButtons();"right"!==d&&"center"!==d||this.alignButtonGroup(a,b[this.currentButtonIndex()].getBBox().width);this.showDropdown()};f.prototype.expandButtons=function(){var a=this.buttons,b=this.buttonOptions,d=this.options,c=this.zoomText;this.hideDropdown();c&&c.show();b.forEach(function(b,c){c=a[c];c.show();c.attr({text:b.text,width:d.buttonTheme.width||28,paddingLeft:B(d.buttonTheme.paddingLeft,"unset"),paddingRight:B(d.buttonTheme.paddingRight,
+"unset")});2>c.state&&c.setState(0)});this.positionButtons()};f.prototype.currentButtonIndex=function(){var a=this.dropdown;return a&&0<a.selectedIndex?a.selectedIndex-1:0};f.prototype.showDropdown=function(){var a=this.buttonGroup,b=this.buttons,d=this.chart,c=this.dropdown;if(a&&c){var e=a.translateX;a=a.translateY;b=b[this.currentButtonIndex()].getBBox();x(c,{left:d.plotLeft+e+"px",top:a+.5+"px",width:b.width+"px",height:b.height+"px"});this.hasVisibleDropdown=!0}};f.prototype.hideDropdown=function(){var a=
+this.dropdown;a&&(x(a,{top:"-9999em",width:"1px",height:"1px"}),this.hasVisibleDropdown=!1)};f.prototype.getHeight=function(){var a=this.options,b=this.group,d=a.y,c=a.buttonPosition.y,e=a.inputPosition.y;if(a.height)return a.height;this.alignElements();a=b?b.getBBox(!0).height+13+d:0;b=Math.min(e,c);if(0>e&&0>c||0<e&&0<c)a+=Math.abs(b);return a};f.prototype.titleCollision=function(a){return!(a.options.title.text||a.options.subtitle.text)};f.prototype.update=function(a){var b=this.chart;t(!0,b.options.rangeSelector,
+a);this.destroy();this.init(b);this.render()};f.prototype.destroy=function(){var a=this,b=a.minInput,c=a.maxInput;a.eventsToUnbind&&(a.eventsToUnbind.forEach(function(a){return a()}),a.eventsToUnbind=void 0);e(a.buttons);b&&(b.onfocus=b.onblur=b.onchange=null);c&&(c.onfocus=c.onblur=c.onchange=null);G(a,function(b,c){b&&"chart"!==c&&(b instanceof m?b.destroy():b instanceof window.HTMLElement&&d(b));b!==f.prototype[c]&&(a[c]=null)},this)};return f}();E.prototype.defaultButtons=[{type:"month",count:1,
+text:"1m",title:"View 1 month"},{type:"month",count:3,text:"3m",title:"View 3 months"},{type:"month",count:6,text:"6m",title:"View 6 months"},{type:"ytd",text:"YTD",title:"View year to date"},{type:"year",count:1,text:"1y",title:"View 1 year"},{type:"all",text:"All",title:"View all"}];E.prototype.inputTypeFormats={"datetime-local":"%Y-%m-%dT%H:%M:%S",date:"%Y-%m-%d",time:"%H:%M:%S"};a.prototype.minFromRange=function(){var a=this.range,b=a.type,d=this.max,c=this.chart.time,e=function(a,d){var e="year"===
+b?"FullYear":"Month",f=new c.Date(a),g=c.get(e,f);c.set(e,f,g+d);g===c.get(e,f)&&c.set("Date",f,0);return f.getTime()-a};if(y(a)){var f=d-a;var g=a}else f=d+e(d,-a.count),this.chart&&(this.chart.fixedRange=d-f);var h=B(this.dataMin,Number.MIN_VALUE);y(f)||(f=h);f<=h&&(f=h,"undefined"===typeof g&&(g=e(f,a.count)),this.newMax=Math.min(f+g,this.dataMax));y(d)||(f=void 0);return f};if(!r.RangeSelector){var D=[],F=function(a){function b(){c&&(d=a.xAxis[0].getExtremes(),e=a.legend,p=c&&c.options.verticalAlign,
+y(d.min)&&c.render(d.min,d.max),e.display&&"top"===p&&p===e.options.verticalAlign&&(h=t(a.spacingBox),h.y="vertical"===e.options.layout?a.plotTop:h.y+c.getHeight(),e.group.placed=!1,e.align(h)))}var d,c=a.rangeSelector,e,h,p;c&&(f(D,function(b){return b[0]===a})||D.push([a,[g(a.xAxis[0],"afterSetExtremes",function(a){c&&c.render(a.min,a.max)}),g(a,"redraw",b)]]),b())};g(h,"afterGetContainer",function(){this.options.rangeSelector&&this.options.rangeSelector.enabled&&(this.rangeSelector=new E(this))});
+g(h,"beforeRender",function(){var a=this.axes,b=this.rangeSelector;b&&(y(b.deferredYTDClick)&&(b.clickButton(b.deferredYTDClick),delete b.deferredYTDClick),a.forEach(function(a){a.updateNames();a.setScale()}),this.getAxisMargins(),b.render(),a=b.options.verticalAlign,b.options.floating||("bottom"===a?this.extraBottomMargin=!0:"middle"!==a&&(this.extraTopMargin=!0)))});g(h,"update",function(a){var b=a.options.rangeSelector;a=this.rangeSelector;var d=this.extraBottomMargin,e=this.extraTopMargin;b&&
+b.enabled&&!c(a)&&this.options.rangeSelector&&(this.options.rangeSelector.enabled=!0,this.rangeSelector=a=new E(this));this.extraTopMargin=this.extraBottomMargin=!1;a&&(F(this),b=b&&b.verticalAlign||a.options&&a.options.verticalAlign,a.options.floating||("bottom"===b?this.extraBottomMargin=!0:"middle"!==b&&(this.extraTopMargin=!0)),this.extraBottomMargin!==d||this.extraTopMargin!==e)&&(this.isDirtyBox=!0)});g(h,"render",function(){var a=this.rangeSelector;a&&!a.options.floating&&(a.render(),a=a.options.verticalAlign,
+"bottom"===a?this.extraBottomMargin=!0:"middle"!==a&&(this.extraTopMargin=!0))});g(h,"getMargins",function(){var a=this.rangeSelector;a&&(a=a.getHeight(),this.extraTopMargin&&(this.plotTop+=a),this.extraBottomMargin&&(this.marginBottom+=a))});h.prototype.callbacks.push(F);g(h,"destroy",function(){for(var a=0;a<D.length;a++){var b=D[a];if(b[0]===this){b[1].forEach(function(a){return a()});D.splice(a,1);break}}});r.RangeSelector=E}return E});t(a,"Accessibility/Components/RangeSelectorComponent.js",
+[a["Extensions/RangeSelector.js"],a["Accessibility/AccessibilityComponent.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Accessibility/Utils/Announcer.js"],a["Accessibility/KeyboardNavigationHandler.js"],a["Core/Utilities.js"]],function(a,h,r,q,m,w){var k=this&&this.__extends||function(){var a=function(c,d){a=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(a,d){a.__proto__=d}||function(a,d){for(var b in d)d.hasOwnProperty(b)&&(a[b]=d[b])};return a(c,d)};return function(c,d){function b(){this.constructor=
+c}a(c,d);c.prototype=null===d?Object.create(d):(b.prototype=d.prototype,new b)}}(),v=r.unhideChartElementFromAT,g=r.getAxisRangeDescription,n=w.addEvent,x=w.attr;h=function(a){function c(){var d=null!==a&&a.apply(this,arguments)||this;d.announcer=void 0;return d}k(c,a);c.prototype.init=function(){this.announcer=new q(this.chart,"polite")};c.prototype.onChartUpdate=function(){var a=this.chart,b=this,c=a.rangeSelector;c&&(this.updateSelectorVisibility(),this.setDropdownAttrs(),c.buttons&&c.buttons.length&&
+c.buttons.forEach(function(a){b.setRangeButtonAttrs(a)}),c.maxInput&&c.minInput&&["minInput","maxInput"].forEach(function(d,e){if(d=c[d])v(a,d),b.setRangeInputAttrs(d,"accessibility.rangeSelector."+(e?"max":"min")+"InputLabel")}))};c.prototype.updateSelectorVisibility=function(){var a=this.chart,b=a.rangeSelector,c=b&&b.dropdown,e=b&&b.buttons||[];b&&b.hasVisibleDropdown&&c?(v(a,c),e.forEach(function(a){return a.element.setAttribute("aria-hidden",!0)})):(c&&c.setAttribute("aria-hidden",!0),e.forEach(function(b){return v(a,
+b.element)}))};c.prototype.setDropdownAttrs=function(){var a=this.chart,b=a.rangeSelector&&a.rangeSelector.dropdown;b&&(a=a.langFormat("accessibility.rangeSelector.dropdownLabel",{rangeTitle:a.options.lang.rangeSelectorZoom}),b.setAttribute("aria-label",a),b.setAttribute("tabindex",-1))};c.prototype.setRangeButtonAttrs=function(a){x(a.element,{tabindex:-1,role:"button"})};c.prototype.setRangeInputAttrs=function(a,b){var c=this.chart;x(a,{tabindex:-1,"aria-label":c.langFormat(b,{chart:c})})};c.prototype.onButtonNavKbdArrowKey=
+function(a,b){var c=a.response,d=this.keyCodes,e=this.chart,g=e.options.accessibility.keyboardNavigation.wrapAround;b=b===d.left||b===d.up?-1:1;return e.highlightRangeSelectorButton(e.highlightedRangeSelectorItemIx+b)?c.success:g?(a.init(b),c.success):c[0<b?"next":"prev"]};c.prototype.onButtonNavKbdClick=function(a){a=a.response;var b=this.chart;3!==b.oldRangeSelectorItemState&&this.fakeClickEvent(b.rangeSelector.buttons[b.highlightedRangeSelectorItemIx].element);return a.success};c.prototype.onAfterBtnClick=
+function(){var a=this.chart,b=g(a.xAxis[0]);(a=a.langFormat("accessibility.rangeSelector.clickButtonAnnouncement",{chart:a,axisRangeDescription:b}))&&this.announcer.announce(a)};c.prototype.onInputKbdMove=function(a){var b=this.chart,c=b.rangeSelector,d=b.highlightedInputRangeIx=(b.highlightedInputRangeIx||0)+a;1<d||0>d?b.accessibility&&(b.accessibility.keyboardNavigation.tabindexContainer.focus(),b.accessibility.keyboardNavigation.move(a)):c&&(a=c[d?"maxDateBox":"minDateBox"],c=c[d?"maxInput":"minInput"],
+a&&c&&b.setFocusToElement(a,c))};c.prototype.onInputNavInit=function(a){var b=this,c=this,d=this.chart,e=0<a?0:1,g=d.rangeSelector,h=g&&g[e?"maxDateBox":"minDateBox"];a=g&&g.minInput;g=g&&g.maxInput;d.highlightedInputRangeIx=e;if(h&&a&&g){d.setFocusToElement(h,e?g:a);this.removeInputKeydownHandler&&this.removeInputKeydownHandler();d=function(a){(a.which||a.keyCode)===b.keyCodes.tab&&(a.preventDefault(),a.stopPropagation(),c.onInputKbdMove(a.shiftKey?-1:1))};var k=n(a,"keydown",d),m=n(g,"keydown",
+d);this.removeInputKeydownHandler=function(){k();m()}}};c.prototype.onInputNavTerminate=function(){var a=this.chart.rangeSelector||{};a.maxInput&&a.hideInput("max");a.minInput&&a.hideInput("min");this.removeInputKeydownHandler&&(this.removeInputKeydownHandler(),delete this.removeInputKeydownHandler)};c.prototype.initDropdownNav=function(){var a=this,b=this.chart,c=b.rangeSelector,e=c&&c.dropdown;c&&e&&(b.setFocusToElement(c.buttonGroup,e),this.removeDropdownKeydownHandler&&this.removeDropdownKeydownHandler(),
+this.removeDropdownKeydownHandler=n(e,"keydown",function(c){var d=b.accessibility;(c.which||c.keyCode)===a.keyCodes.tab&&(c.preventDefault(),c.stopPropagation(),d&&(d.keyboardNavigation.tabindexContainer.focus(),d.keyboardNavigation.move(c.shiftKey?-1:1)))}))};c.prototype.getRangeSelectorButtonNavigation=function(){var a=this.chart,b=this.keyCodes,c=this;return new m(a,{keyCodeMap:[[[b.left,b.right,b.up,b.down],function(a){return c.onButtonNavKbdArrowKey(this,a)}],[[b.enter,b.space],function(){return c.onButtonNavKbdClick(this)}]],
+validate:function(){return!!(a.rangeSelector&&a.rangeSelector.buttons&&a.rangeSelector.buttons.length)},init:function(b){var d=a.rangeSelector;d&&d.hasVisibleDropdown?c.initDropdownNav():d&&(d=d.buttons.length-1,a.highlightRangeSelectorButton(0<b?0:d))},terminate:function(){c.removeDropdownKeydownHandler&&(c.removeDropdownKeydownHandler(),delete c.removeDropdownKeydownHandler)}})};c.prototype.getRangeSelectorInputNavigation=function(){var a=this.chart,b=this;return new m(a,{keyCodeMap:[],validate:function(){return!!(a.rangeSelector&&
+a.rangeSelector.inputGroup&&"hidden"!==a.rangeSelector.inputGroup.element.style.visibility&&!1!==a.options.rangeSelector.inputEnabled&&a.rangeSelector.minInput&&a.rangeSelector.maxInput)},init:function(a){b.onInputNavInit(a)},terminate:function(){b.onInputNavTerminate()}})};c.prototype.getKeyboardNavigation=function(){return[this.getRangeSelectorButtonNavigation(),this.getRangeSelectorInputNavigation()]};c.prototype.destroy=function(){this.removeDropdownKeydownHandler&&this.removeDropdownKeydownHandler();
+this.removeInputKeydownHandler&&this.removeInputKeydownHandler();this.announcer&&this.announcer.destroy()};return c}(h);(function(c){function e(a){var b=this.rangeSelector&&this.rangeSelector.buttons||[],c=this.highlightedRangeSelectorItemIx,d=this.rangeSelector&&this.rangeSelector.selected;"undefined"!==typeof c&&b[c]&&c!==d&&b[c].setState(this.oldRangeSelectorItemState||0);this.highlightedRangeSelectorItemIx=a;return b[a]?(this.setFocusToElement(b[a].box,b[a].element),a!==d&&(this.oldRangeSelectorItemState=
+b[a].state,b[a].setState(1)),!0):!1}function d(){var a=this.chart.accessibility;if(a&&a.components.rangeSelector)return a.components.rangeSelector.onAfterBtnClick()}var b=[];c.compose=function(c,g){-1===b.indexOf(c)&&(b.push(c),c.prototype.highlightRangeSelectorButton=e);-1===b.indexOf(g)&&(b.push(g),n(a,"afterBtnClick",d))}})(h||(h={}));return h});t(a,"Accessibility/Components/SeriesComponent/ForcedMarkers.js",[a["Core/Utilities.js"]],function(a){var h=a.addEvent,k=a.merge,q;(function(a){function m(a){k(!0,
+a,{marker:{enabled:!0,states:{normal:{opacity:0}}}})}function q(a){return a.marker.states&&a.marker.states.normal&&a.marker.states.normal.opacity}function r(){if(this.chart.styledMode){if(this.markerGroup)this.markerGroup[this.a11yMarkersForced?"addClass":"removeClass"]("highcharts-a11y-markers-hidden");this._hasPointMarkers&&this.points&&this.points.length&&this.points.forEach(function(a){a.graphic&&(a.graphic[a.hasForcedA11yMarker?"addClass":"removeClass"]("highcharts-a11y-marker-hidden"),a.graphic[!1===
+a.hasForcedA11yMarker?"addClass":"removeClass"]("highcharts-a11y-marker-visible"))})}}function g(a){this.resetA11yMarkerOptions=k(a.options.marker||{},this.userOptions.marker||{})}function n(){var a=this.options,e=!1!==(this.options.accessibility&&this.options.accessibility.enabled);if(e=this.chart.options.accessibility.enabled&&e)e=this.chart.options.accessibility,e=this.points.length<e.series.pointDescriptionEnabledThreshold||!1===e.series.pointDescriptionEnabledThreshold;if(e){if(a.marker&&!1===
+a.marker.enabled&&(this.a11yMarkersForced=!0,m(this.options)),this._hasPointMarkers&&this.points&&this.points.length)for(a=this.points.length;a--;){e=this.points[a];var d=e.options,b=e.hasForcedA11yMarker;delete e.hasForcedA11yMarker;d.marker&&(b=b&&0===q(d),d.marker.enabled&&!b?(k(!0,d.marker,{states:{normal:{opacity:q(d)||1}}}),e.hasForcedA11yMarker=!1):!1===d.marker.enabled&&(m(d),e.hasForcedA11yMarker=!0))}}else this.a11yMarkersForced&&(delete this.a11yMarkersForced,(a=this.resetA11yMarkerOptions)&&
+this.update({marker:{enabled:a.enabled,states:{normal:{opacity:a.states&&a.states.normal&&a.states.normal.opacity}}}}),delete this.resetA11yMarkerOptions)}var x=[];a.compose=function(a){-1===x.indexOf(a)&&(x.push(a),h(a,"afterSetOptions",g),h(a,"render",n),h(a,"afterRender",r))}})(q||(q={}));return q});t(a,"Accessibility/Components/SeriesComponent/SeriesKeyboardNavigation.js",[a["Core/Series/Point.js"],a["Core/Series/Series.js"],a["Core/Series/SeriesRegistry.js"],a["Core/Globals.js"],a["Core/Utilities.js"],
+a["Accessibility/KeyboardNavigationHandler.js"],a["Accessibility/Utils/EventProvider.js"],a["Accessibility/Utils/ChartUtilities.js"]],function(a,h,r,q,m,w,t,v){function g(a){var b=a.index,c=a.series.points,d=c.length;if(c[b]!==a)for(;d--;){if(c[d]===a)return d}else return b}function k(a){var b=a.chart.options.accessibility.keyboardNavigation.seriesNavigation,c=a.options.accessibility||{},d=c.keyboardNavigation;return d&&!1===d.enabled||!1===c.enabled||!1===a.options.enableMouseTracking||!a.visible||
+b.pointNavigationEnabledThreshold&&b.pointNavigationEnabledThreshold<=a.points.length}function x(a){var b=a.series.chart.options.accessibility,c=a.options.accessibility&&!1===a.options.accessibility.enabled;return a.isNull&&b.keyboardNavigation.seriesNavigation.skipNullPoints||!1===a.visible||!1===a.isInside||c||k(a.series)}function c(a){a=a.series||[];for(var b=a.length,c=0;c<b;++c)if(!k(a[c])){a:{var d=a[c].points||[];for(var e=d.length,f=0;f<e;++f)if(!x(d[f])){d=d[f];break a}d=null}if(d)return d}return null}
+function e(a){for(var b=a.series.length,c=!1;b--&&!(a.highlightedPoint=a.series[b].points[a.series[b].points.length-1],c=a.series[b].highlightNextValidPoint()););return c}function d(a){delete a.highlightedPoint;return(a=c(a))?a.highlight():!1}var b=r.seriesTypes,f=q.doc,u=m.defined,y=m.fireEvent,C=v.getPointFromXY,G=v.getSeriesFromName,H=v.scrollToPoint;r=function(){function b(a,b){this.keyCodes=b;this.chart=a}b.prototype.init=function(){var b=this,d=this.chart,e=this.eventProvider=new t;e.addEvent(h,
+"destroy",function(){return b.onSeriesDestroy(this)});e.addEvent(d,"afterApplyDrilldown",function(){var a=c(this);a&&a.highlight(!1)});e.addEvent(d,"drilldown",function(a){a=a.point;var c=a.series;b.lastDrilledDownPoint={x:a.x,y:a.y,seriesName:c?c.name:""}});e.addEvent(d,"drillupall",function(){setTimeout(function(){b.onDrillupAll()},10)});e.addEvent(a,"afterSetState",function(){var a=this.graphic&&this.graphic.element,b=f.activeElement,c=b&&b.getAttribute("class");c=c&&-1<c.indexOf("highcharts-a11y-proxy-button");
+d.highlightedPoint===this&&b!==a&&!c&&a&&a.focus&&a.focus()})};b.prototype.onDrillupAll=function(){var a=this.lastDrilledDownPoint,b=this.chart,d=a&&G(b,a.seriesName),e;a&&d&&u(a.x)&&u(a.y)&&(e=C(d,a.x,a.y));e=e||c(b);b.container&&b.container.focus();e&&e.highlight&&e.highlight(!1)};b.prototype.getKeyboardNavigationHandler=function(){var a=this,b=this.keyCodes,f=this.chart,g=f.inverted;return new w(f,{keyCodeMap:[[g?[b.up,b.down]:[b.left,b.right],function(b){return a.onKbdSideways(this,b)}],[g?[b.left,
+b.right]:[b.up,b.down],function(b){return a.onKbdVertical(this,b)}],[[b.enter,b.space],function(a,b){if(a=f.highlightedPoint)b.point=a,y(a.series,"click",b),a.firePointEvent("click");return this.response.success}],[[b.home],function(){d(f);return this.response.success}],[[b.end],function(){e(f);return this.response.success}],[[b.pageDown,b.pageUp],function(a){f.highlightAdjacentSeries(a===b.pageDown);return this.response.success}]],init:function(){d(f);return this.response.success},validate:function(){return!!c(f)},
+terminate:function(){return a.onHandlerTerminate()}})};b.prototype.onKbdSideways=function(a,b){var c=this.keyCodes;return this.attemptHighlightAdjacentPoint(a,b===c.right||b===c.down)};b.prototype.onKbdVertical=function(a,b){var c=this.chart,d=this.keyCodes;b=b===d.down||b===d.right;d=c.options.accessibility.keyboardNavigation.seriesNavigation;if(d.mode&&"serialize"===d.mode)return this.attemptHighlightAdjacentPoint(a,b);c[c.highlightedPoint&&c.highlightedPoint.series.keyboardMoveVertical?"highlightAdjacentPointVertical":
+"highlightAdjacentSeries"](b);return a.response.success};b.prototype.onHandlerTerminate=function(){var a=this.chart;a.tooltip&&a.tooltip.hide(0);var b=a.highlightedPoint&&a.highlightedPoint.series;if(b&&b.onMouseOut)b.onMouseOut();if(a.highlightedPoint&&a.highlightedPoint.onMouseOut)a.highlightedPoint.onMouseOut();delete a.highlightedPoint};b.prototype.attemptHighlightAdjacentPoint=function(a,b){var c=this.chart,f=c.options.accessibility.keyboardNavigation.wrapAround;return c.highlightAdjacentPoint(b)?
+a.response.success:f&&(b?d(c):e(c))?a.response.success:a.response[b?"next":"prev"]};b.prototype.onSeriesDestroy=function(a){var b=this.chart;b.highlightedPoint&&b.highlightedPoint.series===a&&(delete b.highlightedPoint,b.focusElement&&b.focusElement.removeFocusBorder())};b.prototype.destroy=function(){this.eventProvider.removeAddedEvents()};return b}();(function(a){function c(a){var b=this.series,c=this.highlightedPoint,d=c&&g(c)||0,e=c&&c.series.points||[],f=this.series&&this.series[this.series.length-
+1];f=f&&f.points&&f.points[f.points.length-1];if(!b[0]||!b[0].points)return!1;if(c){if(b=b[c.series.index+(a?1:-1)],d=e[d+(a?1:-1)],!d&&b&&(d=b.points[a?0:b.points.length-1]),!d)return!1}else d=a?b[0].points[0]:f;return x(d)?(b=d.series,k(b)?this.highlightedPoint=a?b.points[b.points.length-1]:b.points[0]:this.highlightedPoint=d,this.highlightAdjacentPoint(a)):d.highlight()}function d(a){var b=this.highlightedPoint,c=Infinity,d;if(!u(b.plotX)||!u(b.plotY))return!1;this.series.forEach(function(e){k(e)||
+e.points.forEach(function(f){if(u(f.plotY)&&u(f.plotX)&&f!==b){var g=f.plotY-b.plotY,h=Math.abs(f.plotX-b.plotX);h=Math.abs(g)*Math.abs(g)+h*h*4;e.yAxis&&e.yAxis.reversed&&(g*=-1);!(0>=g&&a||0<=g&&!a||5>h||x(f))&&h<c&&(c=h,d=f)}})});return d?d.highlight():!1}function e(a){var b=this.highlightedPoint,c=this.series&&this.series[this.series.length-1],d=c&&c.points&&c.points[c.points.length-1];if(!this.highlightedPoint)return c=a?this.series&&this.series[0]:c,(d=a?c&&c.points&&c.points[0]:d)?d.highlight():
+!1;c=this.series[b.series.index+(a?-1:1)];if(!c)return!1;d=f(b,c,4);if(!d)return!1;if(k(c))return d.highlight(),a=this.highlightAdjacentSeries(a),a?a:(b.highlight(),!1);d.highlight();return d.series.highlightNextValidPoint()}function f(a,b,c,d){var e=Infinity,f=b.points.length,g=function(a){return!(u(a.plotX)&&u(a.plotY))};if(!g(a)){for(;f--;){var h=b.points[f];if(!g(h)&&(h=(a.plotX-h.plotX)*(a.plotX-h.plotX)*(c||1)+(a.plotY-h.plotY)*(a.plotY-h.plotY)*(d||1),h<e)){e=h;var k=f}}return u(k)?b.points[k]:
+void 0}}function h(a){void 0===a&&(a=!0);var b=this.series.chart;if(!this.isNull&&a)this.onMouseOver();else b.tooltip&&b.tooltip.hide(0);H(this);this.graphic&&(b.setFocusToElement(this.graphic),!a&&b.focusElement&&b.focusElement.removeFocusBorder());b.highlightedPoint=this;return this}function n(){var a=this.chart.highlightedPoint,b=(a&&a.series)===this?g(a):0;a=this.points;var c=a.length;if(a&&c){for(var d=b;d<c;++d)if(!x(a[d]))return a[d].highlight();for(;0<=b;--b)if(!x(a[b]))return a[b].highlight()}return!1}
+var m=[];a.compose=function(a,f,g){-1===m.indexOf(a)&&(m.push(a),a=a.prototype,a.highlightAdjacentPoint=c,a.highlightAdjacentPointVertical=d,a.highlightAdjacentSeries=e);-1===m.indexOf(f)&&(m.push(f),f.prototype.highlight=h);-1===m.indexOf(g)&&(m.push(g),f=g.prototype,f.keyboardMoveVertical=!0,["column","gantt","pie"].forEach(function(a){b[a]&&(b[a].prototype.keyboardMoveVertical=!1)}),f.highlightNextValidPoint=n)}})(r||(r={}));return r});t(a,"Accessibility/Components/SeriesComponent/SeriesComponent.js",
+[a["Accessibility/AccessibilityComponent.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Accessibility/Components/SeriesComponent/ForcedMarkers.js"],a["Accessibility/Components/SeriesComponent/NewDataAnnouncer.js"],a["Accessibility/Components/SeriesComponent/SeriesDescriber.js"],a["Accessibility/Components/SeriesComponent/SeriesKeyboardNavigation.js"],a["Core/Tooltip.js"]],function(a,h,r,q,m,w,t){var k=this&&this.__extends||function(){var a=function(c,e){a=Object.setPrototypeOf||{__proto__:[]}instanceof
+Array&&function(a,b){a.__proto__=b}||function(a,b){for(var c in b)b.hasOwnProperty(c)&&(a[c]=b[c])};return a(c,e)};return function(c,e){function d(){this.constructor=c}a(c,e);c.prototype=null===e?Object.create(e):(d.prototype=e.prototype,new d)}}(),g=h.hideSeriesFromAT,n=m.describeSeries;return function(a){function c(){return null!==a&&a.apply(this,arguments)||this}k(c,a);c.compose=function(a,c,b){q.compose(b);r.compose(b);w.compose(a,c,b)};c.prototype.init=function(){this.newDataAnnouncer=new q(this.chart);
+this.newDataAnnouncer.init();this.keyboardNavigation=new w(this.chart,this.keyCodes);this.keyboardNavigation.init();this.hideTooltipFromATWhenShown();this.hideSeriesLabelsFromATWhenShown()};c.prototype.hideTooltipFromATWhenShown=function(){var a=this;this.addEvent(t,"refresh",function(){this.chart===a.chart&&this.label&&this.label.element&&this.label.element.setAttribute("aria-hidden",!0)})};c.prototype.hideSeriesLabelsFromATWhenShown=function(){this.addEvent(this.chart,"afterDrawSeriesLabels",function(){this.series.forEach(function(a){a.labelBySeries&&
+a.labelBySeries.attr("aria-hidden",!0)})})};c.prototype.onChartRender=function(){this.chart.series.forEach(function(a){!1!==(a.options.accessibility&&a.options.accessibility.enabled)&&a.visible?n(a):g(a)})};c.prototype.getKeyboardNavigation=function(){return this.keyboardNavigation.getKeyboardNavigationHandler()};c.prototype.destroy=function(){this.newDataAnnouncer.destroy();this.keyboardNavigation.destroy()};return c}(a)});t(a,"Accessibility/Components/ZoomComponent.js",[a["Accessibility/AccessibilityComponent.js"],
+a["Accessibility/Utils/ChartUtilities.js"],a["Core/Globals.js"],a["Accessibility/KeyboardNavigationHandler.js"],a["Core/Utilities.js"]],function(a,h,r,q,m){var k=this&&this.__extends||function(){var a=function(g,c){a=Object.setPrototypeOf||{__proto__:[]}instanceof Array&&function(a,c){a.__proto__=c}||function(a,c){for(var b in c)c.hasOwnProperty(b)&&(a[b]=c[b])};return a(g,c)};return function(g,c){function e(){this.constructor=g}a(g,c);g.prototype=null===c?Object.create(c):(e.prototype=c.prototype,
+new e)}}(),t=h.unhideChartElementFromAT,v=m.attr,g=m.pick;a=function(a){function h(){var c=null!==a&&a.apply(this,arguments)||this;c.focusedMapNavButtonIx=-1;return c}k(h,a);h.prototype.init=function(){var a=this,e=this.chart;this.proxyProvider.addGroup("zoom","div");["afterShowResetZoom","afterApplyDrilldown","drillupall"].forEach(function(c){a.addEvent(e,c,function(){a.updateProxyOverlays()})})};h.prototype.onChartUpdate=function(){var a=this.chart,e=this;a.mapNavigation&&a.mapNavigation.navButtons.forEach(function(c,
+b){t(a,c.element);e.setMapNavButtonAttrs(c.element,"accessibility.zoom.mapZoom"+(b?"Out":"In"))})};h.prototype.setMapNavButtonAttrs=function(a,e){var c=this.chart;e=c.langFormat(e,{chart:c});v(a,{tabindex:-1,role:"button","aria-label":e})};h.prototype.onChartRender=function(){this.updateProxyOverlays()};h.prototype.updateProxyOverlays=function(){var a=this.chart;this.proxyProvider.clearGroup("zoom");a.resetZoomButton&&this.createZoomProxyButton(a.resetZoomButton,"resetZoomProxyButton",a.langFormat("accessibility.zoom.resetZoomButton",
+{chart:a}));a.drillUpButton&&a.breadcrumbs&&a.breadcrumbs.list&&this.createZoomProxyButton(a.drillUpButton,"drillUpProxyButton",a.langFormat("accessibility.drillUpButton",{chart:a,buttonText:a.breadcrumbs.getButtonText(a.breadcrumbs.list[a.breadcrumbs.list.length-1])}))};h.prototype.createZoomProxyButton=function(a,e,d){this[e]=this.proxyProvider.addProxyElement("zoom",{click:a},{"aria-label":d,tabindex:-1})};h.prototype.getMapZoomNavigation=function(){var a=this.keyCodes,e=this.chart,d=this;return new q(e,
+{keyCodeMap:[[[a.up,a.down,a.left,a.right],function(a){return d.onMapKbdArrow(this,a)}],[[a.tab],function(a,c){return d.onMapKbdTab(this,c)}],[[a.space,a.enter],function(){return d.onMapKbdClick(this)}]],validate:function(){return!!(e.mapZoom&&e.mapNavigation&&e.mapNavigation.navButtons.length)},init:function(a){return d.onMapNavInit(a)}})};h.prototype.onMapKbdArrow=function(a,e){var c=this.keyCodes;this.chart[e===c.up||e===c.down?"yAxis":"xAxis"][0].panStep(e===c.left||e===c.up?-1:1);return a.response.success};
+h.prototype.onMapKbdTab=function(a,e){var c=this.chart;a=a.response;var b=(e=e.shiftKey)&&!this.focusedMapNavButtonIx||!e&&this.focusedMapNavButtonIx;c.mapNavigation.navButtons[this.focusedMapNavButtonIx].setState(0);if(b)return c.mapZoom(),a[e?"prev":"next"];this.focusedMapNavButtonIx+=e?-1:1;e=c.mapNavigation.navButtons[this.focusedMapNavButtonIx];c.setFocusToElement(e.box,e.element);e.setState(2);return a.success};h.prototype.onMapKbdClick=function(a){this.fakeClickEvent(this.chart.mapNavButtons[this.focusedMapNavButtonIx].element);
+return a.response.success};h.prototype.onMapNavInit=function(a){var c=this.chart,d=c.mapNavigation.navButtons[0],b=c.mapNavigation.navButtons[1];d=0<a?d:b;c.setFocusToElement(d.box,d.element);d.setState(2);this.focusedMapNavButtonIx=0<a?0:1};h.prototype.simpleButtonNavigation=function(a,e,d){var b=this.keyCodes,c=this,h=this.chart;return new q(h,{keyCodeMap:[[[b.tab,b.up,b.down,b.left,b.right],function(a,c){return this.response[a===b.tab&&c.shiftKey||a===b.left||a===b.up?"prev":"next"]}],[[b.space,
+b.enter],function(){var a=d(this,h);return g(a,this.response.success)}]],validate:function(){return h[a]&&h[a].box&&c[e].buttonElement},init:function(){h.setFocusToElement(h[a].box,c[e].buttonElement)}})};h.prototype.getKeyboardNavigation=function(){return[this.simpleButtonNavigation("resetZoomButton","resetZoomProxyButton",function(a,e){e.zoomOut()}),this.simpleButtonNavigation("drillUpButton","drillUpProxyButton",function(a,e){e.drillUp();return a.response.prev}),this.getMapZoomNavigation()]};return h}(a);
+(function(a){function g(a,e){var c=e||3;e=this.getExtremes();var b=(e.max-e.min)/c*a;c=e.max+b;b=e.min+b;var f=c-b;0>a&&b<e.dataMin?(b=e.dataMin,c=b+f):0<a&&c>e.dataMax&&(c=e.dataMax,b=c-f);this.setExtremes(b,c)}a.composedClasses=[];a.compose=function(c){-1===a.composedClasses.indexOf(c)&&(a.composedClasses.push(c),c.prototype.panStep=g)}})(a||(a={}));return a});t(a,"Accessibility/HighContrastMode.js",[a["Core/Globals.js"]],function(a){var h=a.doc,k=a.isMS,q=a.win;return{isHighContrastModeActive:function(){var a=
+/(Edg)/.test(q.navigator.userAgent);if(q.matchMedia&&a)return q.matchMedia("(-ms-high-contrast: active)").matches;if(k&&q.getComputedStyle){a=h.createElement("div");a.style.backgroundImage="url(data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==)";h.body.appendChild(a);var r=(a.currentStyle||q.getComputedStyle(a)).backgroundImage;h.body.removeChild(a);return"none"===r}return q.matchMedia&&q.matchMedia("(forced-colors: active)").matches},setHighContrastTheme:function(a){a.highContrastModeActive=
+!0;var h=a.options.accessibility.highContrastTheme;a.update(h,!1);a.series.forEach(function(a){var k=h.plotOptions[a.type]||{};a.update({color:k.color||"windowText",colors:[k.color||"windowText"],borderColor:k.borderColor||"window"});a.points.forEach(function(a){a.options&&a.options.color&&a.update({color:k.color||"windowText",borderColor:k.borderColor||"window"},!1)})});a.redraw()}}});t(a,"Accessibility/HighContrastTheme.js",[],function(){return{chart:{backgroundColor:"window"},title:{style:{color:"windowText"}},
+subtitle:{style:{color:"windowText"}},colorAxis:{minColor:"windowText",maxColor:"windowText",stops:[]},colors:["windowText"],xAxis:{gridLineColor:"windowText",labels:{style:{color:"windowText"}},lineColor:"windowText",minorGridLineColor:"windowText",tickColor:"windowText",title:{style:{color:"windowText"}}},yAxis:{gridLineColor:"windowText",labels:{style:{color:"windowText"}},lineColor:"windowText",minorGridLineColor:"windowText",tickColor:"windowText",title:{style:{color:"windowText"}}},tooltip:{backgroundColor:"window",
+borderColor:"windowText",style:{color:"windowText"}},plotOptions:{series:{lineColor:"windowText",fillColor:"window",borderColor:"windowText",edgeColor:"windowText",borderWidth:1,dataLabels:{connectorColor:"windowText",color:"windowText",style:{color:"windowText",textOutline:"none"}},marker:{lineColor:"windowText",fillColor:"windowText"}},pie:{color:"window",colors:["window"],borderColor:"windowText",borderWidth:1},boxplot:{fillColor:"window"},candlestick:{lineColor:"windowText",fillColor:"window"},
+errorbar:{fillColor:"window"}},legend:{backgroundColor:"window",itemStyle:{color:"windowText"},itemHoverStyle:{color:"windowText"},itemHiddenStyle:{color:"#555"},title:{style:{color:"windowText"}}},credits:{style:{color:"windowText"}},labels:{style:{color:"windowText"}},drilldown:{activeAxisLabelStyle:{color:"windowText"},activeDataLabelStyle:{color:"windowText"}},navigation:{buttonOptions:{symbolStroke:"windowText",theme:{fill:"window"}}},rangeSelector:{buttonTheme:{fill:"window",stroke:"windowText",
+style:{color:"windowText"},states:{hover:{fill:"window",stroke:"windowText",style:{color:"windowText"}},select:{fill:"#444",stroke:"windowText",style:{color:"windowText"}}}},inputBoxBorderColor:"windowText",inputStyle:{backgroundColor:"window",color:"windowText"},labelStyle:{color:"windowText"}},navigator:{handles:{backgroundColor:"window",borderColor:"windowText"},outlineColor:"windowText",maskFill:"transparent",series:{color:"windowText",lineColor:"windowText"},xAxis:{gridLineColor:"windowText"}},
+scrollbar:{barBackgroundColor:"#444",barBorderColor:"windowText",buttonArrowColor:"windowText",buttonBackgroundColor:"window",buttonBorderColor:"windowText",rifleColor:"windowText",trackBackgroundColor:"window",trackBorderColor:"windowText"}}});t(a,"Accessibility/Options/Options.js",[],function(){return{accessibility:{enabled:!0,screenReaderSection:{beforeChartFormat:"<{headingTagName}>{chartTitle}</{headingTagName}><div>{typeDescription}</div><div>{chartSubtitle}</div><div>{chartLongdesc}</div><div>{playAsSoundButton}</div><div>{viewTableButton}</div><div>{xAxisDescription}</div><div>{yAxisDescription}</div><div>{annotationsTitle}{annotationsList}</div>",
+afterChartFormat:"{endOfChartMarker}",axisRangeDateFormat:"%Y-%m-%d %H:%M:%S"},series:{describeSingleSeries:!1,pointDescriptionEnabledThreshold:200},point:{valueDescriptionFormat:"{index}. {xDescription}{separator}{value}."},landmarkVerbosity:"all",linkedDescription:'*[data-highcharts-chart="{index}"] + .highcharts-description',keyboardNavigation:{enabled:!0,focusBorder:{enabled:!0,hideBrowserFocusOutline:!0,style:{color:"#335cad",lineWidth:2,borderRadius:3},margin:2},order:["series","zoom","rangeSelector",
+"legend","chartMenu"],wrapAround:!0,seriesNavigation:{skipNullPoints:!0,pointNavigationEnabledThreshold:!1}},announceNewData:{enabled:!1,minAnnounceInterval:5E3,interruptUser:!1}},legend:{accessibility:{enabled:!0,keyboardNavigation:{enabled:!0}}},exporting:{accessibility:{enabled:!0}}}});t(a,"Accessibility/Options/LangOptions.js",[],function(){return{accessibility:{defaultChartTitle:"Chart",chartContainerLabel:"{title}. Highcharts interactive chart.",svgContainerLabel:"Interactive chart",drillUpButton:"{buttonText}",
+credits:"Chart credits: {creditsStr}",thousandsSep:",",svgContainerTitle:"",graphicContainerLabel:"",screenReaderSection:{beforeRegionLabel:"Chart screen reader information, {chartTitle}.",afterRegionLabel:"",annotations:{heading:"Chart annotations summary",descriptionSinglePoint:"{annotationText}. Related to {annotationPoint}",descriptionMultiplePoints:"{annotationText}. Related to {annotationPoint}{ Also related to, #each(additionalAnnotationPoints)}",descriptionNoPoints:"{annotationText}"},endOfChartMarker:"End of interactive chart."},
+sonification:{playAsSoundButtonText:"Play as sound, {chartTitle}",playAsSoundClickAnnouncement:"Play"},legend:{legendLabelNoTitle:"Toggle series visibility, {chartTitle}",legendLabel:"Chart legend: {legendTitle}",legendItem:"Show {itemName}"},zoom:{mapZoomIn:"Zoom chart",mapZoomOut:"Zoom out chart",resetZoomButton:"Reset zoom"},rangeSelector:{dropdownLabel:"{rangeTitle}",minInputLabel:"Select start date.",maxInputLabel:"Select end date.",clickButtonAnnouncement:"Viewing {axisRangeDescription}"},table:{viewAsDataTableButtonText:"View as data table, {chartTitle}",
+tableSummary:"Table representation of chart."},announceNewData:{newDataAnnounce:"Updated data for chart {chartTitle}",newSeriesAnnounceSingle:"New data series: {seriesDesc}",newPointAnnounceSingle:"New data point: {pointDesc}",newSeriesAnnounceMultiple:"New data series in chart {chartTitle}: {seriesDesc}",newPointAnnounceMultiple:"New data point in chart {chartTitle}: {pointDesc}"},seriesTypeDescriptions:{boxplot:"Box plot charts are typically used to display groups of statistical data. Each data point in the chart can have up to 5 values: minimum, lower quartile, median, upper quartile, and maximum.",
+arearange:"Arearange charts are line charts displaying a range between a lower and higher value for each point.",areasplinerange:"These charts are line charts displaying a range between a lower and higher value for each point.",bubble:"Bubble charts are scatter charts where each data point also has a size value.",columnrange:"Columnrange charts are column charts displaying a range between a lower and higher value for each point.",errorbar:"Errorbar series are used to display the variability of the data.",
+funnel:"Funnel charts are used to display reduction of data in stages.",pyramid:"Pyramid charts consist of a single pyramid with item heights corresponding to each point value.",waterfall:"A waterfall chart is a column chart where each column contributes towards a total end value."},chartTypes:{emptyChart:"Empty chart",mapTypeDescription:"Map of {mapTitle} with {numSeries} data series.",unknownMap:"Map of unspecified region with {numSeries} data series.",combinationChart:"Combination chart with {numSeries} data series.",
+defaultSingle:"Chart with {numPoints} data {#plural(numPoints, points, point)}.",defaultMultiple:"Chart with {numSeries} data series.",splineSingle:"Line chart with {numPoints} data {#plural(numPoints, points, point)}.",splineMultiple:"Line chart with {numSeries} lines.",lineSingle:"Line chart with {numPoints} data {#plural(numPoints, points, point)}.",lineMultiple:"Line chart with {numSeries} lines.",columnSingle:"Bar chart with {numPoints} {#plural(numPoints, bars, bar)}.",columnMultiple:"Bar chart with {numSeries} data series.",
+barSingle:"Bar chart with {numPoints} {#plural(numPoints, bars, bar)}.",barMultiple:"Bar chart with {numSeries} data series.",pieSingle:"Pie chart with {numPoints} {#plural(numPoints, slices, slice)}.",pieMultiple:"Pie chart with {numSeries} pies.",scatterSingle:"Scatter chart with {numPoints} {#plural(numPoints, points, point)}.",scatterMultiple:"Scatter chart with {numSeries} data series.",boxplotSingle:"Boxplot with {numPoints} {#plural(numPoints, boxes, box)}.",boxplotMultiple:"Boxplot with {numSeries} data series.",
+bubbleSingle:"Bubble chart with {numPoints} {#plural(numPoints, bubbles, bubble)}.",bubbleMultiple:"Bubble chart with {numSeries} data series."},axis:{xAxisDescriptionSingular:"The chart has 1 X axis displaying {names[0]}. {ranges[0]}",xAxisDescriptionPlural:"The chart has {numAxes} X axes displaying {#each(names, -1) }and {names[-1]}.",yAxisDescriptionSingular:"The chart has 1 Y axis displaying {names[0]}. {ranges[0]}",yAxisDescriptionPlural:"The chart has {numAxes} Y axes displaying {#each(names, -1) }and {names[-1]}.",
+timeRangeDays:"Range: {range} days.",timeRangeHours:"Range: {range} hours.",timeRangeMinutes:"Range: {range} minutes.",timeRangeSeconds:"Range: {range} seconds.",rangeFromTo:"Range: {rangeFrom} to {rangeTo}.",rangeCategories:"Range: {numCategories} categories."},exporting:{chartMenuLabel:"Chart menu",menuButtonLabel:"View chart menu, {chartTitle}"},series:{summary:{"default":"{name}, series {ix} of {numSeries} with {numPoints} data {#plural(numPoints, points, point)}.",defaultCombination:"{name}, series {ix} of {numSeries} with {numPoints} data {#plural(numPoints, points, point)}.",
+line:"{name}, line {ix} of {numSeries} with {numPoints} data {#plural(numPoints, points, point)}.",lineCombination:"{name}, series {ix} of {numSeries}. Line with {numPoints} data {#plural(numPoints, points, point)}.",spline:"{name}, line {ix} of {numSeries} with {numPoints} data {#plural(numPoints, points, point)}.",splineCombination:"{name}, series {ix} of {numSeries}. Line with {numPoints} data {#plural(numPoints, points, point)}.",column:"{name}, bar series {ix} of {numSeries} with {numPoints} {#plural(numPoints, bars, bar)}.",
+columnCombination:"{name}, series {ix} of {numSeries}. Bar series with {numPoints} {#plural(numPoints, bars, bar)}.",bar:"{name}, bar series {ix} of {numSeries} with {numPoints} {#plural(numPoints, bars, bar)}.",barCombination:"{name}, series {ix} of {numSeries}. Bar series with {numPoints} {#plural(numPoints, bars, bar)}.",pie:"{name}, pie {ix} of {numSeries} with {numPoints} {#plural(numPoints, slices, slice)}.",pieCombination:"{name}, series {ix} of {numSeries}. Pie with {numPoints} {#plural(numPoints, slices, slice)}.",
+scatter:"{name}, scatter plot {ix} of {numSeries} with {numPoints} {#plural(numPoints, points, point)}.",scatterCombination:"{name}, series {ix} of {numSeries}, scatter plot with {numPoints} {#plural(numPoints, points, point)}.",boxplot:"{name}, boxplot {ix} of {numSeries} with {numPoints} {#plural(numPoints, boxes, box)}.",boxplotCombination:"{name}, series {ix} of {numSeries}. Boxplot with {numPoints} {#plural(numPoints, boxes, box)}.",bubble:"{name}, bubble series {ix} of {numSeries} with {numPoints} {#plural(numPoints, bubbles, bubble)}.",
+bubbleCombination:"{name}, series {ix} of {numSeries}. Bubble series with {numPoints} {#plural(numPoints, bubbles, bubble)}.",map:"{name}, map {ix} of {numSeries} with {numPoints} {#plural(numPoints, areas, area)}.",mapCombination:"{name}, series {ix} of {numSeries}. Map with {numPoints} {#plural(numPoints, areas, area)}.",mapline:"{name}, line {ix} of {numSeries} with {numPoints} data {#plural(numPoints, points, point)}.",maplineCombination:"{name}, series {ix} of {numSeries}. Line with {numPoints} data {#plural(numPoints, points, point)}.",
+mapbubble:"{name}, bubble series {ix} of {numSeries} with {numPoints} {#plural(numPoints, bubbles, bubble)}.",mapbubbleCombination:"{name}, series {ix} of {numSeries}. Bubble series with {numPoints} {#plural(numPoints, bubbles, bubble)}."},description:"{description}",xAxisDescription:"X axis, {name}",yAxisDescription:"Y axis, {name}",nullPointValue:"No value",pointAnnotationsDescription:"{Annotation: #each(annotations). }"}}}});t(a,"Accessibility/Options/DeprecatedOptions.js",[a["Core/Utilities.js"]],
+function(a){function h(a,h,k){for(var c,e=0;e<h.length-1;++e)c=h[e],a=a[c]=v(a[c],{});a[h[h.length-1]]=k}function k(a,k,m,c){function e(a,b){return b.reduce(function(a,b){return a[b]},a)}var d=e(a.options,k),b=e(a.options,m);Object.keys(c).forEach(function(e){var f,g=d[e];"undefined"!==typeof g&&(h(b,c[e],g),t(32,!1,a,(f={},f[k.join(".")+"."+e]=m.join(".")+"."+c[e].join("."),f)))})}function q(a){var g=a.options.chart,h=a.options.accessibility||{};["description","typeDescription"].forEach(function(c){var e;
+g[c]&&(h[c]=g[c],t(32,!1,a,(e={},e["chart."+c]="use accessibility."+c,e)))})}function m(a){a.axes.forEach(function(g){(g=g.options)&&g.description&&(g.accessibility=g.accessibility||{},g.accessibility.description=g.description,t(32,!1,a,{"axis.description":"use axis.accessibility.description"}))})}function w(a){var g={description:["accessibility","description"],exposeElementToA11y:["accessibility","exposeAsGroupOnly"],pointDescriptionFormatter:["accessibility","point","descriptionFormatter"],skipKeyboardNavigation:["accessibility",
+"keyboardNavigation","enabled"],"accessibility.pointDescriptionFormatter":["accessibility","point","descriptionFormatter"]};a.series.forEach(function(k){Object.keys(g).forEach(function(c){var e,d=k.options[c];"accessibility.pointDescriptionFormatter"===c&&(d=k.options.accessibility&&k.options.accessibility.pointDescriptionFormatter);"undefined"!==typeof d&&(h(k.options,g[c],"skipKeyboardNavigation"===c?!d:d),t(32,!1,a,(e={},e["series."+c]="series."+g[c].join("."),e)))})})}var t=a.error,v=a.pick;return function(a){q(a);
+m(a);a.series&&w(a);k(a,["accessibility"],["accessibility"],{pointDateFormat:["point","dateFormat"],pointDateFormatter:["point","dateFormatter"],pointDescriptionFormatter:["point","descriptionFormatter"],pointDescriptionThreshold:["series","pointDescriptionEnabledThreshold"],pointNavigationThreshold:["keyboardNavigation","seriesNavigation","pointNavigationEnabledThreshold"],pointValueDecimals:["point","valueDecimals"],pointValuePrefix:["point","valuePrefix"],pointValueSuffix:["point","valueSuffix"],
+screenReaderSectionFormatter:["screenReaderSection","beforeChartFormatter"],describeSingleSeries:["series","describeSingleSeries"],seriesDescriptionFormatter:["series","descriptionFormatter"],onTableAnchorClick:["screenReaderSection","onViewDataTableClick"],axisRangeDateFormat:["screenReaderSection","axisRangeDateFormat"]});k(a,["accessibility","keyboardNavigation"],["accessibility","keyboardNavigation","seriesNavigation"],{skipNullPoints:["skipNullPoints"],mode:["mode"]});k(a,["lang","accessibility"],
+["lang","accessibility"],{legendItem:["legend","legendItem"],legendLabel:["legend","legendLabel"],mapZoomIn:["zoom","mapZoomIn"],mapZoomOut:["zoom","mapZoomOut"],resetZoomButton:["zoom","resetZoomButton"],screenReaderRegionLabel:["screenReaderSection","beforeRegionLabel"],rangeSelectorButton:["rangeSelector","buttonText"],rangeSelectorMaxInput:["rangeSelector","maxInputLabel"],rangeSelectorMinInput:["rangeSelector","minInputLabel"],svgContainerEnd:["screenReaderSection","endOfChartMarker"],viewAsDataTable:["table",
+"viewAsDataTableButtonText"],tableSummary:["table","tableSummary"]})}});t(a,"Accessibility/Accessibility.js",[a["Core/DefaultOptions.js"],a["Core/Globals.js"],a["Core/Utilities.js"],a["Accessibility/A11yI18n.js"],a["Accessibility/Components/ContainerComponent.js"],a["Accessibility/FocusBorder.js"],a["Accessibility/Components/InfoRegionsComponent.js"],a["Accessibility/KeyboardNavigation.js"],a["Accessibility/Components/LegendComponent.js"],a["Accessibility/Components/MenuComponent.js"],a["Accessibility/Components/SeriesComponent/NewDataAnnouncer.js"],
+a["Accessibility/ProxyProvider.js"],a["Accessibility/Components/RangeSelectorComponent.js"],a["Accessibility/Components/SeriesComponent/SeriesComponent.js"],a["Accessibility/Components/ZoomComponent.js"],a["Accessibility/HighContrastMode.js"],a["Accessibility/HighContrastTheme.js"],a["Accessibility/Options/Options.js"],a["Accessibility/Options/LangOptions.js"],a["Accessibility/Options/DeprecatedOptions.js"]],function(a,h,r,q,m,w,t,v,g,n,x,c,e,d,b,f,u,y,M,G){a=a.defaultOptions;var k=h.doc,B=r.addEvent,
+C=r.extend,z=r.fireEvent,E=r.merge;h=function(){function a(a){this.proxyProvider=this.keyboardNavigation=this.components=this.chart=void 0;this.init(a)}a.prototype.init=function(a){this.chart=a;k.addEventListener&&a.renderer.isSVG?(G(a),this.proxyProvider=new c(this.chart),this.initComponents(),this.keyboardNavigation=new v(a,this.components)):(this.zombie=!0,this.components={},a.renderTo.setAttribute("aria-hidden",!0))};a.prototype.initComponents=function(){var a=this.chart,c=this.proxyProvider,
+f=a.options.accessibility;this.components={container:new m,infoRegions:new t,legend:new g,chartMenu:new n,rangeSelector:new e,series:new d,zoom:new b};f.customComponents&&C(this.components,f.customComponents);var h=this.components;this.getComponentOrder().forEach(function(b){h[b].initBase(a,c);h[b].init()})};a.prototype.getComponentOrder=function(){if(!this.components)return[];if(!this.components.series)return Object.keys(this.components);var a=Object.keys(this.components).filter(function(a){return"series"!==
+a});return["series"].concat(a)};a.prototype.update=function(){var a=this.components,b=this.chart,c=b.options.accessibility;z(b,"beforeA11yUpdate");b.types=this.getChartTypes();c=c.keyboardNavigation.order;this.proxyProvider.updateGroupOrder(c);this.getComponentOrder().forEach(function(c){a[c].onChartUpdate();z(b,"afterA11yComponentUpdate",{name:c,component:a[c]})});this.keyboardNavigation.update(c);!b.highContrastModeActive&&f.isHighContrastModeActive()&&f.setHighContrastTheme(b);z(b,"afterA11yUpdate",
+{accessibility:this})};a.prototype.destroy=function(){var a=this.chart||{},b=this.components;Object.keys(b).forEach(function(a){b[a].destroy();b[a].destroyBase()});this.proxyProvider&&this.proxyProvider.destroy();this.keyboardNavigation&&this.keyboardNavigation.destroy();a.renderTo&&a.renderTo.setAttribute("aria-hidden",!0);a.focusElement&&a.focusElement.removeFocusBorder()};a.prototype.getChartTypes=function(){var a={};this.chart.series.forEach(function(b){a[b.type]=1});return Object.keys(a)};return a}();
+(function(a){function c(){this.accessibility&&this.accessibility.destroy()}function f(){this.a11yDirty&&this.renderTo&&(delete this.a11yDirty,this.updateA11yEnabled());var a=this.accessibility;a&&!a.zombie&&(a.proxyProvider.updateProxyElementPositions(),a.getComponentOrder().forEach(function(b){a.components[b].onChartRender()}))}function h(a){if(a=a.options.accessibility)a.customComponents&&(this.options.accessibility.customComponents=a.customComponents,delete a.customComponents),E(!0,this.options.accessibility,
+a),this.accessibility&&this.accessibility.destroy&&(this.accessibility.destroy(),delete this.accessibility);this.a11yDirty=!0}function k(){var b=this.accessibility,c=this.options.accessibility;c&&c.enabled?b&&!b.zombie?b.update():(this.accessibility=b=new a(this),!b.zombie)&&b.update():b?(b.destroy&&b.destroy(),delete this.accessibility):this.renderTo.setAttribute("aria-hidden",!0)}function m(){this.series.chart.accessibility&&(this.series.chart.a11yDirty=!0)}var r=[];a.i18nFormat=q.i18nFormat;a.compose=
+function(a,l,p,t,u,y,z){v.compose(l);x.compose(u);g.compose(l,p);n.compose(l);d.compose(l,t,u);b.compose(a);q.compose(l);w.compose(l,y);z&&e.compose(l,z);-1===r.indexOf(l)&&(r.push(l),l.prototype.updateA11yEnabled=k,B(l,"destroy",c),B(l,"render",f),B(l,"update",h),["addSeries","init"].forEach(function(a){B(l,a,function(){this.a11yDirty=!0})}),["afterApplyDrilldown","drillupall"].forEach(function(a){B(l,a,function(){var a=this.accessibility;a&&!a.zombie&&a.update()})}));-1===r.indexOf(t)&&(r.push(t),
+B(t,"update",m));-1===r.indexOf(u)&&(r.push(u),["update","updatedData","remove"].forEach(function(a){B(u,a,function(){this.chart.accessibility&&(this.chart.a11yDirty=!0)})}))}})(h||(h={}));E(!0,a,y,{accessibility:{highContrastTheme:u},lang:M});return h});t(a,"masters/modules/accessibility.src.js",[a["Core/Globals.js"],a["Accessibility/Accessibility.js"],a["Accessibility/AccessibilityComponent.js"],a["Accessibility/Utils/ChartUtilities.js"],a["Accessibility/Utils/HTMLUtilities.js"],a["Accessibility/KeyboardNavigationHandler.js"],
+a["Accessibility/Components/SeriesComponent/SeriesDescriber.js"]],function(a,h,r,q,m,t,C){a.i18nFormat=h.i18nFormat;a.A11yChartUtilities=q;a.A11yHTMLUtilities=m;a.AccessibilityComponent=r;a.KeyboardNavigationHandler=t;a.SeriesAccessibilityDescriber=C;h.compose(a.Axis,a.Chart,a.Legend,a.Point,a.Series,a.SVGElement,a.RangeSelector)})});
+//# sourceMappingURL=accessibility.js.map
